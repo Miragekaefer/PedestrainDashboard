@@ -1,0 +1,83 @@
+# docker-compose.yml
+version: '3.8'
+
+services:
+  redis:
+    image: redis/redis-stack:latest
+    container_name: pedestrian_redis
+    ports:
+      - "6379:6379"
+      - "8001:8001"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - pedestrian_network
+
+
+  # Initial data load - läuft einmal nach Redis start
+  data_loader:
+    build: ./backend
+    container_name: pedestrian_data_loader
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - PYTHONUNBUFFERED=1  # Deaktiviert Buffering
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+    command: python -u scripts/initial_load.py # -u flag für unbuffered
+    networks:
+      - pedestrian_network
+    restart: "no" # Runs only once
+
+  scheduler:
+    build: ./backend
+    container_name: pedestrian_scheduler
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    depends_on:
+      redis:
+        condition: service_healthy
+      data_loader:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    volumes:
+      - ./backend:/app
+    command: python -m data_ingestion.scheduler
+    networks:
+      - pedestrian_network
+
+  api:
+    build: ./backend
+    container_name: pedestrian_api
+    ports:
+      - "8000:8000"
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    depends_on:
+      redis:
+        condition: service_healthy
+      data_loader:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    volumes:
+      - ./backend:/app
+    command: uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+    networks:
+      - pedestrian_network
+
+networks:
+  pedestrian_network:
+    driver: bridge
+
+volumes:
+  redis_data:
