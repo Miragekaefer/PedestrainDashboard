@@ -116,16 +116,28 @@ class APIFetcher:
     # ============================================
     
     def _store_batch(self, street: str, records: List[Dict]) -> int:
-        """Speichert einen Batch von Records in Redis"""
-        stored = 0
-        for record in records:
-            try:
-                data = self._transform_record(street, record)
-                self.redis_client.store_hourly_data(street, data)
-                stored += 1
-            except Exception as e:
-                print(f"Error storing record: {e}")
-        return stored
+        """Speichert Batch - nutzt jetzt bulk_store für bessere Performance"""
+        if not records:
+            return 0
+        
+        try:
+            # Transformiere alle Records
+            transformed_data = []
+            for record in records:
+                try:
+                    data = self._transform_record(street, record)
+                    transformed_data.append(data)
+                except Exception as e:
+                    print(f"Error transforming record: {e}")
+            
+            # Bulk-Insert mit Indexierung
+            if transformed_data:
+                self.redis_client.bulk_store_hourly_data(street, transformed_data)
+            
+            return len(transformed_data)
+        except Exception as e:
+            print(f"Error storing batch: {e}")
+            return 0
     
     def _transform_record(self, street: str, record: Dict) -> Dict:
         """Transformiert API-Format in Redis-Format"""

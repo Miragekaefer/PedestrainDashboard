@@ -20,10 +20,28 @@ class PedestrianRedisClient:
     # ============================================
     
     def store_hourly_data(self, street: str, data: Dict):
-        """Speichert stündliche Passantendaten"""
+        """Speichert stündliche Passantendaten MIT Index"""
         key = f"pedestrian:hourly:{street}:{data['date']}:{data['hour']}"
+        
+        # 1. Daten speichern
         self.client.hset(key, mapping=data)
-        self.client.expire(key, 60*60*24*730)  # 2 Jahre TTL
+        self.client.expire(key, 60*60*24*730)
+        
+        # 2. Index-Eintrag erstellen
+        self._add_to_index(street, key, data['date'], data['hour'])
+
+    def _add_to_index(self, street: str, key: str, date: str, hour: str):
+        """Fügt Key zum Sorted Set Index hinzu"""
+        try:
+            timestamp = f"{date}T{str(hour).zfill(2)}:00:00"
+            score = datetime.fromisoformat(timestamp).timestamp()
+            
+            index_key = f"pedestrian:index:{street}"
+            self.client.zadd(index_key, {key: score})
+            self.client.expire(index_key, 60*60*24*730)
+        except Exception as e:
+            # Falls Indexierung fehlschlägt, loggen aber nicht abbrechen
+            print(f"Warning: Could not add to index: {e}")
     
     def get_hourly_data(self, street: str, date: str, hour: int) -> Optional[Dict]:
         """Holt stündliche Daten"""
@@ -32,27 +50,103 @@ class PedestrianRedisClient:
         return data if data else None
     
     def get_historical_range(self, street: str, start_date: str, end_date: str) -> List[Dict]:
-        """Holt historische Daten für einen Zeitraum"""
-        pattern = f"pedestrian:hourly:{street}:*"
-        keys = self.client.keys(pattern)
+        """
+        Intelligente Range-Query mit automatischem Fallback
+        Nutzt Index wenn verfügbar, sonst SCAN
+        """
+        index_key = f"pedestrian:index:{street}"
         
-        results = []
+        # Prüfe ob Index existiert
+        if self.client.exists(index_key):
+            return self._get_range_via_index(street, start_date, end_date)
+        else:
+            return self._get_range_via_scan(street, start_date, end_date)
+        
+    def _get_range_via_index(self, street: str, start_date: str, end_date: str) -> List[Dict]:
+        """Schnelle Methode mit Sorted Set Index - O(log N)"""
+        index_key = f"pedestrian:index:{street}"
+        
+        # Konvertiere zu Timestamps
+        start_ts = datetime.fromisoformat(f"{start_date}T00:00:00").timestamp()
+        end_ts = datetime.fromisoformat(f"{end_date}T23:59:59").timestamp()
+        
+        # Hole Keys aus Index (O(log N))
+        keys = self.client.zrangebyscore(index_key, start_ts, end_ts)
+        
+        if not keys:
+            return []
+        
+        # Hole alle Daten mit Pipeline (1 Round-Trip)
+        pipe = self.client.pipeline()
         for key in keys:
-            data = self.client.hgetall(key)
-            if data and start_date <= data.get('date', '') <= end_date:
-                results.append(data)
+            pipe.hgetall(key)
         
-        return sorted(results, key=lambda x: (x.get('date', ''), int(x.get('hour', 0))))
+        results = pipe.execute()
+        
+        # Filtere leere und sortiere
+        valid_results = [r for r in results if r]
+        return sorted(valid_results, key=lambda x: (x.get('date', ''), int(x.get('hour', 0))))
+
+    def _get_range_via_scan(self, street: str, start_date: str, end_date: str) -> List[Dict]:
+        """Fallback mit SCAN für Daten ohne Index"""
+        pattern = f"pedestrian:hourly:{street}:*"
+        
+        # Phase 1: Sammle Keys mit SCAN
+        matching_keys = []
+        cursor = 0
+        
+        while True:
+            cursor, keys = self.client.scan(
+                cursor=cursor,
+                match=pattern,
+                count=1000
+            )
+            
+            # Filtere Keys nach Datum
+            for key in keys:
+                parts = key.split(':')
+                if len(parts) >= 4:
+                    key_date = parts[3]
+                    if start_date <= key_date <= end_date:
+                        matching_keys.append(key)
+            
+            if cursor == 0:
+                break
+        
+        if not matching_keys:
+            return []
+        
+        # Phase 2: Hole Daten mit Pipeline
+        pipe = self.client.pipeline()
+        for key in matching_keys:
+            pipe.hgetall(key)
+        
+        results = pipe.execute()
+        valid_results = [r for r in results if r]
+        return sorted(valid_results, key=lambda x: (x.get('date', ''), int(x.get('hour', 0))))
     
     def bulk_store_hourly_data(self, street: str, data_list: List[Dict]):
-        """Bulk Insert mit Pipeline"""
+        """Bulk Insert mit Pipeline UND Indexierung"""
         pipe = self.client.pipeline()
+        index_key = f"pedestrian:index:{street}"
         
         for data in data_list:
             key = f"pedestrian:hourly:{street}:{data['date']}:{data['hour']}"
+            
+            # Daten speichern
             pipe.hset(key, mapping=data)
             pipe.expire(key, 60*60*24*730)
+            
+            # Index-Eintrag
+            try:
+                timestamp = f"{data['date']}T{str(data['hour']).zfill(2)}:00:00"
+                score = datetime.fromisoformat(timestamp).timestamp()
+                pipe.zadd(index_key, {key: score})
+            except:
+                pass
         
+        # Index TTL
+        pipe.expire(index_key, 60*60*24*730)
         pipe.execute()
     
     # ============================================
@@ -332,3 +426,26 @@ class PedestrianRedisClient:
                 locations.append(location)
         
         return locations
+
+    def _get_range_via_index(self, street: str, start_date: str, end_date: str) -> List[Dict]:
+        """Schnelle Methode mit Index"""
+        index_key = f"pedestrian:index:{street}"
+        start_ts = datetime.fromisoformat(f"{start_date}T00:00:00").timestamp()
+        end_ts = datetime.fromisoformat(f"{end_date}T23:59:59").timestamp()
+        
+        keys = self.client.zrangebyscore(index_key, start_ts, end_ts)
+        
+        if not keys:
+            return []
+        
+        pipe = self.client.pipeline()
+        for key in keys:
+            pipe.hgetall(key)
+        
+        results = pipe.execute()
+        return sorted([r for r in results if r], key=lambda x: (x.get('date', ''), int(x.get('hour', 0))))
+
+    def _get_range_via_scan(self, street: str, start_date: str, end_date: str) -> List[Dict]:
+        """Fallback mit SCAN"""
+        # Wie oben in Optimierung 1
+        ...
