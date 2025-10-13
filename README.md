@@ -74,7 +74,6 @@ Ein umfassendes System zur Analyse und Vorhersage von Passantenströmen in Würz
 
 **Container Runtime:**
 - Docker & Docker Compose **oder** Podman & Podman Compose
-  - [Docker Desktop Installation](https://docs.docker.com/get-docker/)
   - [Podman Installation](https://podman.io/getting-started/installation) (Alternative zu Docker)
 
 **Für Frontend-Entwicklung:**
@@ -90,43 +89,36 @@ Ein umfassendes System zur Analyse und Vorhersage von Passantenströmen in Würz
 ```bash
 # Repository klonen
 git clone <repository-url>
-cd PedestrainDashboard-main
+cd PedestrainDashboard
 
 # CSV-Dateien im backend/data/ Ordner platzieren
 mkdir -p backend/data
 # (Dateien manuell in backend/data/ kopieren)
 
-# .env Datei erstellen
-cat > .env << EOF
+# .env Datei umbenennen von **.env.local** zu **.env**
 OPENWEATHER_API_KEY=your_api_key_here
 REDIS_HOST=redis
 REDIS_PORT=6379
-EOF
 
 # Backend starten (baut Container, startet Redis, importiert Daten)
-docker-compose up -d
+podman compose up -d --build
 
 # Frontend Dependencies installieren
 cd frontend
 npm install
 
-# Frontend .env.local erstellen
-cat > .env.local << EOF
+# Frontend .env.local erstellen:
 NEXT_PUBLIC_API_URL=http://localhost:8000
-EOF
 
 # Frontend im Development-Modus starten
 npm run dev
 
-# Logs vom Backend verfolgen (in neuem Terminal)
-cd ..
-docker-compose logs -f
-```
+# Logs vom Backend verfolgen (in Podman Desktop)
 
-**Alternative mit Podman:**
+**Alternative mit Docker:**
 ```bash
-# Ersetze 'docker-compose' mit 'podman-compose' in allen Befehlen
-podman-compose up -d
+# Ersetze 'podman compose' mit 'docker-compose' in allen Befehlen
+docker-compose up -d --build
 ```
 
 ### Erste Schritte
@@ -164,10 +156,6 @@ OPENWEATHER_API_KEY=your_api_key_here
 # Redis Configuration
 REDIS_HOST=redis
 REDIS_PORT=6379
-
-# API Configuration (optional)
-API_HOST=0.0.0.0
-API_PORT=8000
 ```
 
 **Frontend (frontend/.env.local):**
