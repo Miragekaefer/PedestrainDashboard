@@ -1,15 +1,3 @@
-# def train_and_predict
-
-# _load_training_data --> trainingsdaten aus Redis laden (früher CSV) mit Events, etc.
-
-# _train_model 
-
-# _save_model --> Speichert Modell und Metadaten (in Container oder DB)
-#wir müssen events auf eien ähnliche weise ziehen (date,event,concert)
-#lectures (date, is_lecture_period)
-#public_holidays (date, is_holiday, is_nationwide)
-#school_holidays (date, is_school_holiday)
-
 import pandas as pd
 import numpy as np
 import pickle
@@ -23,58 +11,86 @@ from tqdm import tqdm
 
 BASE_URL = "http://localhost:8000"
 
-def load_pedestrian_data_from_api(base_url=f"{BASE_URL}"):
+def load_pedestrian_data_from_api(base_url=f"{BASE_URL}/pedestrian"):
     """
-    Fetch all available pedestrian data from the API for all streets and return as a single DataFrame.
+    Fetch all available pedestrian data from the API and return as a DataFrame.
     """
-    streets = ["Kaiserstraße", "Spiegelstraße", "Schönbornstraße"]
     all_records = []
 
-    for street in streets:
+    try:
+        # Ideally, you have an endpoint like /pedestrian/all or /pedestrian/hourly/all
+        response = requests.get(f"{base_url}/hourly/all")
+        response.raise_for_status()
+        data = response.json()
+    except Exception as e:
+        print(f"Failed to fetch pedestrian data: {e}")
+        return pd.DataFrame()
+
+    # alles was wir aus der API erstmal kriegen
+    for item in tqdm(data, desc="Processing pedestrian entries"):
         try:
-            response = requests.get(f"{base_url}/api/pedestrians/all", params={"street": street})
-            response.raise_for_status()
-            data = response.json().get("data", [])
+            basic = item.get("basic_info", {})
+            counts = item.get("counts", {})
+            weather = item.get("weather", {})
+            meta = item.get("metadata", {})
+
+            all_records.append({
+                "id": basic.get("id"),
+                "streetname": basic.get("street"),
+                "city": basic.get("city"),
+                "date": basic.get("date"),
+                "hour": basic.get("hour"),
+                "weekday": basic.get("weekday"),
+                "n_pedestrians": counts.get("total"),
+                "n_pedestrians_towards": counts.get("towards_center"),
+                "n_pedestrians_away": counts.get("away_from_center"),
+                "temperature": weather.get("temperature"),
+                "weather_condition": weather.get("condition"),
+                "incidents": meta.get("incidents", "no_incident"),
+                "collection_type": meta.get("collection_type", "measured")
+            })
         except Exception as e:
-            print(f"Failed to fetch pedestrian data for {street}: {e}")
-            continue
-
-        for item in tqdm(data, desc=f"Processing pedestrian entries for {street}"):
-            try:
-                incidents_value = item.get("incidents", "no_incident")
-                if incidents_value not in ["incidents", "no_incident"]:
-                    incidents_value = "no_incident"
-
-                all_records.append({
-                    "id": item.get("id"),
-                    "streetname": item.get("street"),
-                    "city": item.get("city"),
-                    "date": item.get("date"),
-                    "hour": item.get("hour"),
-                    "n_pedestrians": item.get("n_pedestrians"),
-                    "n_pedestrians_towards": item.get("n_pedestrians_towards"),
-                    "n_pedestrians_away": item.get("n_pedestrians_away"),
-                    "temperature": item.get("temperature"),
-                    "weather_condition": item.get("weather_condition"),
-                    "incidents": incidents_value,
-                    "collection_type": item.get("collection_type")
-                })
-            except Exception as e:
-                print(f" Skipped entry due to error: {e}")
+            print(f" Skipped entry due to error: {e}")
 
     df = pd.DataFrame(all_records)
-
-    # ✅ Fix dtypes
-    df['date'] = pd.to_datetime(df['date'], errors='coerce')
-    df['hour'] = pd.to_numeric(df['hour'], errors='coerce')
-    df['temperature'] = pd.to_numeric(df['temperature'], errors='coerce')
-
-    # Drop rows with invalid values if any
-    df = df.dropna(subset=['date', 'hour'])
-
-    print(df.dtypes)
     return df
 
+
+"""def preprocess_training_data(raw_csv_path: str) -> pd.DataFrame:
+
+    df = pd.read_csv(raw_csv_path, sep=';')
+
+    # Split location into streetname and city
+    df[['streetname', 'city']] = df['location'].str.split(',', expand=True)
+    df['city'] = df['city'].str.strip()
+    df['streetname'] = df['streetname'].str.strip()
+
+    # Convert time of measurement to datetime
+    df['datetime'] = pd.to_datetime(df['time of measurement'], errors='coerce', utc=True)
+    df['date'] = df['datetime'].dt.date.astype(str)
+    df['hour'] = df['datetime'].dt.hour
+
+    # Rename columns
+    df.rename(columns={
+        'pedestrians count': 'n_pedestrians',
+        'towards Hauptbahnhof pedestrians count': 'n_pedestrians_towards',
+        'towards Juliuspromenade pedestrians count': 'n_pedestrians_away',
+        'temperature in ºc': 'temperature',
+        'weather condition': 'weather_condition'
+    }, inplace=True)
+
+    # Fill missing incidents
+    df['incidents'] = df['incidents'].fillna('no_incident')
+
+    # Create unique id
+    df['id'] = df['streetname'] + '_' + df['date'] + '_' + df['hour'].astype(str)
+
+    # Keep only needed columns
+    df = df[['id', 'streetname', 'city', 'date', 'hour', 'weekday',
+             'n_pedestrians', 'n_pedestrians_towards', 'n_pedestrians_away',
+             'temperature', 'weather_condition', 'incidents', 'collection_type']]
+
+    return df"""
 # -----------------------
 # Feature engineering functions
 # -----------------------
@@ -149,53 +165,52 @@ def create_weather_features(df):
     df = pd.concat([df, pd.get_dummies(df['temp_band'], prefix='temp')], axis=1)
     return df
 
-def load_events_from_api(base_url=BASE_URL):
-    url = f"{base_url}/api/all_event_dates"
-    try:
-        res = requests.get(url)
-        res.raise_for_status()
-        data = res.json().get("events", [])
-    except Exception as e:
-        print(f"❌ Failed to fetch events from {url}: {e}")
-        return []
+def load_events_from_api(base_url=f"{BASE_URL}/api/events"):
+    all_entries = []
+    # auch hier einfach einen /all request nötig - aber vielleicht mit irgendeiner consistens das nicht jedes mal alles geladen werden muss
+    dates = pd.date_range("2019-01-01", "2023-12-31").strftime("%Y-%m-%d")
 
-    if not data:
-        print(f"❌ Failed to fetch events from {url}")
-        return []
-    
-    ### final structure:
-    ### date,event,concert
-    ### 2019-01-01 00:00:00,0,0
-    df = pd.DataFrame([{
-        "date": d.get("datetime"),
-        "event": int(d.get("event", 0)),
-        "concert": int(d.get("concert", 0))
-    } for d in data])
+    for date in tqdm(dates, desc="Fetching event data"):
+        try:
+            res = requests.get(f"{base_url}/{date}")
+            if res.status_code != 200:
+                continue
+            data = res.json()
 
-    return df
+            has_event = int(data.get("has_events", False))
+            has_concert = any(e.get("is_concert", False) for e in data.get("events", []))
 
-def load_lectures_from_api(base_url=BASE_URL):
-    """
-    Load all lecture period data from API.
-    Returns DataFrame: [date, lecture_period_jmu]
-    """
-    url = f"{base_url}/api/lecture/all"
-    try:
-        res = requests.get(url)
-        res.raise_for_status()
-        data = res.json().get("data", [])
-    except Exception as e:
-        print(f"❌ Failed to fetch lectures from {url}: {e}")
-        return pd.DataFrame()
+            # Create hourly entries for the day
+            for hour in range(24):
+                all_entries.append({
+                    "date": date,
+                    "hour": hour,
+                    "event": has_event,
+                    "concert": int(has_concert)
+                })
+        except Exception as e:
+            print(f" Failed to fetch {date}: {e}")
 
-    df = pd.DataFrame([{
-        "date": d.get("date"),
-        "lecture_period_jmu": int(d.get("is_lecture_period", 0))
-    } for d in data])
+    return pd.DataFrame(all_entries)
 
-    print("test2")
-    df['date'] = pd.to_datetime(df['date'], errors='coerce')
-    return df
+def load_lectures_from_api(base_url=f"{BASE_URL}/api/lecture/daily"):
+    # auch hier einfach einen /all request nötig - aber vielleicht mit irgendeiner consistens das nicht jedes mal alles geladen werden muss
+    entries = []
+    dates = pd.date_range("2019-01-01", "2023-12-31").strftime("%Y-%m-%d")
+
+    for date in tqdm(dates, desc="Fetching lectures"):
+        try:
+            res = requests.get(f"{base_url}/{date}")
+            if res.status_code != 200:
+                continue
+            data = res.json()
+            entries.append({
+                "date": data["date"],
+                "lecture_period_jmu": int(data.get("is_lecture_period", False))
+            })
+        except Exception as e:
+            print(f" {date}: {e}")
+    return pd.DataFrame(entries)
 
 def add_wurzburg_events(df):
     eventsDf = load_events_from_api()
@@ -204,52 +219,44 @@ def add_wurzburg_events(df):
     df = df.merge(eventsDf, on=["date", "hour"], how="left")
     df = df.merge(lecturesDf, on="date", how="left")
 
-    print("test3")
     df["is_exam_period"] = df["month"].isin([1, 2, 7, 8]).astype(int)
     return df
 
-def load_public_holidays_from_api(base_url=BASE_URL):
-    """
-    Load all public holiday data from API.
-    Returns DataFrame: [date, is_public_holiday, is_nationwide]
-    """
-    url = f"{base_url}/api/holiday/all"
+def load_public_holidays_from_api(base_url=f"{BASE_URL}/api/holiday"):
+    entries = []
+    dates = pd.date_range("2019-01-01", "2023-12-31").strftime("%Y-%m-%d")
+
+    for date in tqdm(dates, desc="Fetching public holidays"):
+        try:
+            res = requests.get(f"{base_url}/{date}")
+            if res.status_code != 200:
+                continue
+            data = res.json()
+            entries.append({
+                "date": data["date"],
+                "public_holiday": int(data.get("is_holiday", False)),
+                "nationwide": int(data.get("is_nationwide", False))
+            })
+        except Exception as e:
+            print(f" {date}: {e}")
+    return pd.DataFrame(entries)
+
+def load_school_holidays_from_api(base_url=f"{BASE_URL}/api/school-holiday"):
     try:
-        res = requests.get(url)
+        res = requests.get(base_url)
         res.raise_for_status()
-        data = res.json().get("data", [])
+        data = res.json()
     except Exception as e:
-        print(f"❌ Failed to fetch public holidays from {url}: {e}")
+        print(f" Failed to fetch school holidays: {e}")
         return pd.DataFrame()
 
-    df = pd.DataFrame([{
-        "date": d.get("date"),
-        "is_public_holiday": int(d.get("is_holiday", 0)),
-        "is_nationwide": int(d.get("is_nationwide", 0))
-    } for d in data])
-    df['date'] = pd.to_datetime(df['date'], errors='coerce')
-    return df
-
-def load_school_holidays_from_api(base_url=BASE_URL):
-    """
-    Load all school holiday data from API.
-    Returns DataFrame: [date, is_school_holiday]
-    """
-    url = f"{base_url}/api/school-holiday/all"
-    try:
-        res = requests.get(url)
-        res.raise_for_status()
-        data = res.json().get("data", [])
-    except Exception as e:
-        print(f"❌ Failed to fetch school holidays from {url}: {e}")
-        return pd.DataFrame()
-
-    df = pd.DataFrame([{
-        "date": d.get("date"),
-        "is_school_holiday": int(d.get("is_school_holiday", 0))
-    } for d in data])
-    df['date'] = pd.to_datetime(df['date'], errors='coerce')
-    return df
+    entries = []
+    for item in data:
+        entries.append({
+            "date": item["date"],
+            "school_holiday": int(item.get("is_school_holiday", False))
+        })
+    return pd.DataFrame(entries)
 
 def add_enhanced_holiday_features(df):
     publicHolidaysDf = load_public_holidays_from_api()

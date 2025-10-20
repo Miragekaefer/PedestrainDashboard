@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
-import { CalendarDays, TrendingUp, Users, MapPin } from 'lucide-react';
+import { TrendingUp, MapPin } from 'lucide-react';
 import { DashboardFilters, StatisticsData, HourlyDataPoint, DailyDataPoint, CalendarEvent } from '@/lib/types';
 import { pedestrianAPI } from '@/lib/api';
 import { StreetFilter } from './filters/street-filter';
@@ -13,6 +13,7 @@ import { CalendarComponent } from './calendar/calendar-component';
 import { DataVisualization } from './charts/data-visualization';
 import { StatisticsCards } from './statistics/statistics-cards';
 import { ThemeToggle } from './theme-toggle';
+import { eachDayOfInterval, format, isAfter } from 'date-fns';
 
 export function Dashboard() {
   const [filters, setFilters] = useState<DashboardFilters>({
@@ -20,8 +21,8 @@ export function Dashboard() {
     dateRange: {
       type: 'week',
       start: new Date(),
-      end: new Date()
-    }
+      end: new Date(),
+    },
   });
 
   const [loading, setLoading] = useState(true);
@@ -31,6 +32,7 @@ export function Dashboard() {
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
   const [streets, setStreets] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [futureEvents, setFutureEvents] = useState<CalendarEvent[]>([]);
 
   // Load streets on mount
   useEffect(() => {
@@ -46,52 +48,148 @@ export function Dashboard() {
     loadStreets();
   }, []);
 
-  // Load data when filters change
+  // Load future events (once)
   useEffect(() => {
-    const loadData = async () => {
-      if (!filters.street) return;
-
-      setLoading(true);
-      setError(null);
-
+    const loadFutureEvents = async () => {
       try {
-        const { start, end } = filters.dateRange;
-        const startDate = start.toISOString().split('T')[0];
-        const endDate = end.toISOString().split('T')[0];
+        const today = new Date();
+        const futureEnd = new Date(today);
+        futureEnd.setMonth(futureEnd.getMonth() + 4);
 
-        // Load historical data and statistics
-        const [historicalResponse, stats] = await Promise.all([
-          pedestrianAPI.getHistoricalData(filters.street, startDate, endDate),
-          pedestrianAPI.getStatistics(filters.street, startDate, endDate)
-        ]);
+        const dates: Date[] = [];
+        const cur = new Date(today);
+        cur.setHours(0, 0, 0, 0);
+        futureEnd.setHours(0, 0, 0, 0);
 
-        setStatistics(stats);
+        while (cur <= futureEnd) {
+          dates.push(new Date(cur));
+          cur.setDate(cur.getDate() + 1);
+        }
 
-        // Transform data for charts
-        const hourlyChartData = pedestrianAPI.transformToHourlyData(historicalResponse.data);
-        const dailyChartData = pedestrianAPI.transformToDailyData(historicalResponse.data);
+        const promises = dates.map(async (date) => {
+          const dateStr = date.toISOString().split('T')[0];
+          try {
+            const eventsInfo: any = await pedestrianAPI.getEventsForDate(dateStr);
+            const dateEvents: CalendarEvent[] = [];
 
-        setHourlyData(hourlyChartData);
-        setDailyData(dailyChartData);
+            if (eventsInfo && Array.isArray(eventsInfo.events)) {
+              eventsInfo.events.forEach((evt: any) => {
+                dateEvents.push({
+                  date: new Date(date),
+                  type: evt.is_concert ? 'concert' : 'event',
+                  name: evt.event_name ?? 'Unnamed Event',
+                  description: evt.is_concert ? 'Concert' : 'Event',
+                });
+              });
+            }
+            return dateEvents;
+          } catch {
+            return [];
+          }
+        });
 
-        // Generate calendar events for the date range
-        await loadCalendarEvents();
-
+        const allResults = (await Promise.all(promises)).flat();
+        allResults.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+        setFutureEvents(allResults);
       } catch (err) {
-        console.error('Failed to load data:', err);
-        setError('Failed to load pedestrian data');
-      } finally {
-        setLoading(false);
+        console.error('Failed to load future events:', err);
+        setFutureEvents([]);
       }
     };
 
-    loadData();
-  }, [filters]);
+    loadFutureEvents();
+  }, []);
 
+  // Load data when filters change
+  useEffect(() => {
+const loadData = async () => {
+  if (!filters.street) return;
+
+  setLoading(true);
+  setError(null);
+
+  try {
+    const { start, end } = filters.dateRange;
+    const startDate = start.toISOString().split('T')[0];
+    const endDate = end.toISOString().split('T')[0];
+
+    let combinedData: any[] = [];
+    let combinedStats: StatisticsData = {
+      totalPedestrians: 0,
+      avgHourlyCount: 0,
+      peakHour: 0,
+      peakCount: 0,
+      directionRatio: 0,
+      weatherImpact: 'low'
+    };
+
+    if (filters.street === 'All_streets') {
+      // Fetch all streets in parallel
+      const promises = streets.map(async (street) => {
+        const [hist, stats] = await Promise.all([
+          pedestrianAPI.getHistoricalData(street, startDate, endDate),
+          pedestrianAPI.getStatistics(street, startDate, endDate)
+        ]);
+
+        return { hist, stats };
+      });
+
+      const results = await Promise.all(promises);
+
+      // Combine all historical data
+      results.forEach(({ hist, stats }) => {
+        if (hist && Array.isArray(hist.data)) {
+          combinedData.push(...hist.data);
+        }
+
+        // Combine statistics (averaging where appropriate)
+        combinedStats.totalPedestrians += stats.totalPedestrians;
+        combinedStats.avgHourlyCount += stats.avgHourlyCount;
+        combinedStats.peakCount = Math.max(combinedStats.peakCount, stats.peakCount);
+        combinedStats.directionRatio += stats.directionRatio;
+      });
+
+      // Average out some metrics
+      if (results.length > 0) {
+        combinedStats.avgHourlyCount = Math.round(combinedStats.avgHourlyCount / results.length);
+        combinedStats.directionRatio = Math.round(combinedStats.directionRatio / results.length);
+      }
+    } else {
+      // Single street
+      const [histResp, statsResp] = await Promise.all([
+        pedestrianAPI.getHistoricalData(filters.street, startDate, endDate),
+        pedestrianAPI.getStatistics(filters.street, startDate, endDate)
+      ]);
+
+      combinedData = histResp.data;
+      combinedStats = statsResp;
+    }
+
+    // Transform for charts
+    const hourlyChartData = pedestrianAPI.transformToHourlyData(combinedData);
+    const dailyChartData = pedestrianAPI.transformToDailyData(combinedData);
+
+    // Update state
+    setStatistics(combinedStats);
+    setHourlyData(hourlyChartData);
+    setDailyData(fillDailyData(dailyChartData, filters.dateRange.start, filters.dateRange.end));
+
+    await loadCalendarEvents();
+  } catch (err) {
+    console.error('Failed to load data:', err);
+    setError('Failed to load pedestrian data');
+  } finally {
+    setLoading(false);
+  }
+};
+
+
+    loadData();
+  }, [filters, streets]);
+
+  // Calendar events loader
   const loadCalendarEvents = async () => {
     const { start, end } = filters.dateRange;
-
-    // Generate array of dates
     const dates: Date[] = [];
     const currentDate = new Date(start);
     while (currentDate <= end) {
@@ -99,24 +197,22 @@ export function Dashboard() {
       currentDate.setDate(currentDate.getDate() + 1);
     }
 
-    // Fetch all dates in parallel (much faster!)
     const promises = dates.map(async (date) => {
       const dateStr = date.toISOString().split('T')[0];
       try {
         const [calendarInfo, eventsInfo] = await Promise.all([
           pedestrianAPI.getCalendarInfo(dateStr),
-          pedestrianAPI.getEventsForDate(dateStr)
+          pedestrianAPI.getEventsForDate(dateStr),
         ]);
 
         const dateEvents: CalendarEvent[] = [];
 
-        // Add different types of events
         if (calendarInfo.is_public_holiday) {
           dateEvents.push({
             date: new Date(date),
             type: 'holiday',
             name: calendarInfo.public_holiday_name || 'Public Holiday',
-            description: calendarInfo.is_nationwide_holiday ? 'National Holiday' : 'Regional Holiday'
+            description: calendarInfo.is_nationwide_holiday ? 'National Holiday' : 'Regional Holiday',
           });
         }
 
@@ -125,7 +221,7 @@ export function Dashboard() {
             date: new Date(date),
             type: 'school_holiday',
             name: calendarInfo.school_holiday_name || 'School Holiday',
-            description: 'School break period'
+            description: 'School break period',
           });
         }
 
@@ -134,7 +230,7 @@ export function Dashboard() {
             date: new Date(date),
             type: 'lecture',
             name: 'University Lecture Period',
-            description: 'Regular semester period'
+            description: 'Regular semester period',
           });
         }
 
@@ -144,25 +240,22 @@ export function Dashboard() {
               date: new Date(date),
               type: event.is_concert ? 'concert' : 'event',
               name: event.event_name,
-              description: event.is_concert ? 'Concert' : 'Event'
+              description: event.is_concert ? 'Concert' : 'Event',
             });
           });
         }
 
         return dateEvents;
-      } catch (err) {
-        console.error(`Failed to load calendar data for ${dateStr}:`, err);
+      } catch {
         return [];
       }
     });
 
-    // Wait for all promises to resolve
-    const results = await Promise.all(promises);
-    const allEvents = results.flat();
-    
+    const allEvents = (await Promise.all(promises)).flat();
     setCalendarEvents(allEvents);
   };
 
+  // Filter handlers
   const handleStreetChange = (street: string) => {
     setFilters(prev => ({ ...prev, street }));
   };
@@ -170,6 +263,19 @@ export function Dashboard() {
   const handleDateRangeChange = (dateRange: DashboardFilters['dateRange']) => {
     setFilters(prev => ({ ...prev, dateRange }));
   };
+
+  // Fill missing daily data
+  function fillDailyData(dailyData: DailyDataPoint[], startDate: Date, endDate: Date): DailyDataPoint[] {
+    const today = new Date();
+    const intervalEnd = isAfter(endDate, today) ? today : endDate;
+
+    const allDates = eachDayOfInterval({ start: startDate, end: intervalEnd }).map(d => format(d, 'yyyy-MM-dd'));
+
+    return allDates.map(date => {
+      const existing = dailyData.find(d => d.date === date);
+      return existing ?? { date, total: 0, avgHourly: 0, weekday: format(new Date(date), 'EEEE') };
+    });
+  }
 
   if (error) {
     return (
@@ -200,9 +306,7 @@ export function Dashboard() {
               </div>
             </div>
             <div className="flex items-center space-x-3">
-              <Badge variant="outline" className="hidden sm:inline-flex">
-                Live Data
-              </Badge>
+              <Badge variant="outline" className="hidden sm:inline-flex">Live Data</Badge>
               <ThemeToggle />
             </div>
           </div>
@@ -255,9 +359,7 @@ export function Dashboard() {
                       </div>
                       <div className="flex justify-between">
                         <span className="text-gray-600 dark:text-gray-400">Data Points:</span>
-                        <span className="font-medium dark:text-gray-200">
-                          {loading ? '...' : dailyData.length}
-                        </span>
+                        <span className="font-medium dark:text-gray-200">{loading ? '...' : dailyData.length}</span>
                       </div>
                     </div>
                   </div>
@@ -267,14 +369,8 @@ export function Dashboard() {
 
             {/* Main Content */}
             <div className="lg:col-span-4 space-y-6 h-full overflow-y-auto">
-              {/* Statistics Cards */}
-              <StatisticsCards
-                statistics={statistics}
-                loading={loading}
-                street={filters.street}
-              />
+              <StatisticsCards statistics={statistics} loading={loading} street={filters.street} />
 
-              {/* Charts Section */}
               <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
                 <div className="xl:col-span-2">
                   <DataVisualization
@@ -284,11 +380,12 @@ export function Dashboard() {
                     dateRange={filters.dateRange}
                   />
                 </div>
-                
+
                 <div className="xl:col-span-1">
                   <CalendarComponent
                     events={calendarEvents}
                     loading={loading}
+                    futureEvents={futureEvents}
                     dateRange={filters.dateRange}
                   />
                 </div>

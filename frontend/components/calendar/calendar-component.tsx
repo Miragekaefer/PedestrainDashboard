@@ -4,50 +4,47 @@ import { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Calendar } from '@/components/ui/calendar';
-import { Button } from '@/components/ui/button';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import {
-  CalendarIcon,
-  Music,
-  Gift,
-  GraduationCap,
-  CalendarDays,
-  ChevronLeft,
-  ChevronRight
-} from 'lucide-react';
-import { format, isSameDay, startOfMonth, endOfMonth, eachDayOfInterval } from 'date-fns';
+import { CalendarIcon, Music, Gift, GraduationCap, CalendarDays } from 'lucide-react';
+import { format, isSameDay, isAfter } from 'date-fns';
 import { CalendarEvent, DashboardFilters } from '@/lib/types';
+import { NextEvent } from '@/components/calendar/nextEvent';
 
 interface CalendarComponentProps {
-  events: CalendarEvent[];
+  events: CalendarEvent[];                
+  futureEvents?: CalendarEvent[];        
   loading: boolean;
   dateRange: DashboardFilters['dateRange'];
 }
 
-export function CalendarComponent({ events, loading, dateRange }: CalendarComponentProps) {
+// Quick fix: shift date by one day for calendar display
+const fixDate = (date: string | Date) => {
+  const d = new Date(date);
+  d.setDate(d.getDate() - 1);
+  return d;
+};
+
+export function CalendarComponent({ events, futureEvents, loading, dateRange }: CalendarComponentProps) {
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(new Date());
   const [currentMonth, setCurrentMonth] = useState<Date>(new Date());
 
-  // Group events by type for legend
+  // Group events by type
   const eventTypes = events.reduce((acc, event) => {
-    if (!acc[event.type]) {
-      acc[event.type] = [];
-    }
+    if (!acc[event.type]) acc[event.type] = [];
     acc[event.type].push(event);
     return acc;
   }, {} as Record<string, CalendarEvent[]>);
 
-  // Get events for selected date
-  const selectedDateEvents = events.filter(event =>
-    selectedDate && isSameDay(event.date, selectedDate)
+  // Events for selected date
+  const selectedDateEvents = events.filter(
+    event => selectedDate && isSameDay(fixDate(event.date), selectedDate)
   );
 
-  // Custom modifiers for styling calendar days
-  const holidayDates = events.filter(e => e.type === 'holiday').map(e => e.date);
-  const schoolHolidayDates = events.filter(e => e.type === 'school_holiday').map(e => e.date);
-  const eventDates = events.filter(e => e.type === 'event').map(e => e.date);
-  const concertDates = events.filter(e => e.type === 'concert').map(e => e.date);
-  const lectureDates = events.filter(e => e.type === 'lecture').map(e => e.date);
+  // Calendar modifiers
+  const holidayDates = events.filter(e => e.type === 'holiday').map(e => fixDate(e.date));
+  const schoolHolidayDates = events.filter(e => e.type === 'school_holiday').map(e => fixDate(e.date));
+  const eventDates = events.filter(e => e.type === 'event').map(e => fixDate(e.date));
+  const concertDates = events.filter(e => e.type === 'concert').map(e => fixDate(e.date));
+  const lectureDates = events.filter(e => e.type === 'lecture').map(e => fixDate(e.date));
 
   const modifiers = {
     holiday: holidayDates,
@@ -119,18 +116,18 @@ export function CalendarComponent({ events, loading, dateRange }: CalendarCompon
           <span>Event Calendar</span>
         </CardTitle>
       </CardHeader>
+
       <CardContent className="space-y-6">
+        {/* Next Upcoming Event Box — use futureEvents (independent), fallback to calendar events */}
+        <NextEvent events={futureEvents && futureEvents.length > 0 ? futureEvents : events} />
+
         {/* Legend */}
         <div className="space-y-2">
           <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300">Legend</h4>
           <div className="flex flex-wrap gap-2">
             {Object.entries(eventTypes).length > 0 ? (
               Object.entries(eventTypes).map(([type, typeEvents]) => (
-                <Badge
-                  key={type}
-                  variant="outline"
-                  className="flex items-center space-x-1"
-                >
+                <Badge key={type} variant="outline" className="flex items-center space-x-1">
                   <div className={`w-2 h-2 rounded-full ${getEventColor(type)}`} />
                   <span>{getEventLabel(type)}</span>
                   <span className="text-xs text-gray-500 dark:text-gray-400">({typeEvents.length})</span>
@@ -191,9 +188,7 @@ export function CalendarComponent({ events, loading, dateRange }: CalendarCompon
             <p className="text-xs text-gray-600 dark:text-gray-400">Total Events</p>
           </div>
           <div className="text-center">
-            <p className="text-2xl font-bold text-green-600 dark:text-green-400">
-              {Object.keys(eventTypes).length}
-            </p>
+            <p className="text-2xl font-bold text-green-600 dark:text-green-400">{Object.keys(eventTypes).length}</p>
             <p className="text-xs text-gray-600 dark:text-gray-400">Event Types</p>
           </div>
         </div>
