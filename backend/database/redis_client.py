@@ -16,6 +16,87 @@ class PedestrianRedisClient:
         print(f"Connected to Redis at {host or config.REDIS_HOST}:{port or config.REDIS_PORT}")
     
     # ============================================
+    # ALL EVENTS (FOR MODEL TRAINING)
+    # ============================================
+
+    def get_all_events(self) -> List[Dict]:
+        """Holt alle Events mit Format {date, hour, datatime, event, concert}"""
+        events = []
+        
+        # Alle Event-Keys mit Pattern-Matching finden
+        pattern = "event:*:*"
+        keys = self.client.keys(pattern)
+        
+        for key in keys:
+            # Key-Format: event:YYYY-MM-DD:HH
+            parts = key.split(':')
+            if len(parts) == 3 and parts[0] == 'event':
+                data = self.client.hgetall(key)
+                
+                if data:
+                    events.append({
+                        'date': data.get('date', parts[1]),
+                        'hour': int(data.get('hour', parts[2])),
+                        "datetime": data.get('datetime'),
+                        'event': bool(int(data.get('has_event', 0))),
+                        'concert': bool(int(data.get('has_concert', 0)))
+                    })
+        
+        # Nach Datum und Stunde sortieren
+        events.sort(key=lambda x: (x['date'], x['hour']))
+        return events
+
+    # ============================================
+    # ALL LECTURES (FOR MODEL TRAINING)
+    # ============================================
+
+    def get_all_lecture_dates(self) -> List[str]:
+        """Return all dates that are within lecture periods"""
+        return list(self.client.smembers('lectures:all_dates') or [])
+
+    def get_all_lectures(self) -> List[Dict]:
+        """Return all lecture periods for all dates"""
+        all_dates = self.get_all_lecture_dates()
+        results = []
+
+        for date_str in all_dates:
+            info = self.get_lecture_info(date_str) or {}
+            results.append({
+                "date": date_str,
+                "is_lecture_period": int(info.get("jmu_lecture", 0))
+            })
+        
+        return results
+
+    # ============================================
+    # ALL HOLIDAYS (FOR MODEL TRAINING)
+    # ============================================
+
+    def get_all_public_holidays(self) -> List[Dict]:
+        """Return all public holidays"""
+        keys = self.client.keys("holiday:*") or []
+        holidays = []
+
+        for key in keys:
+            data = self.client.hgetall(key)
+            if data:
+                holidays.append({
+                    "date": data.get("date"),
+                    "is_holiday": int(data.get("is_holiday", 0)),
+                    "is_nationwide": int(data.get("is_nationwide", 0))
+                })
+        
+        return holidays
+
+    # ============================================
+    # ALL SCHOOL HOLIDAYS (FOR MODEL TRAINING)
+    # ============================================
+
+    def get_all_school_holiday_dates(self) -> List[str]:
+        """Return all dates that are school holidays"""
+        return list(self.client.smembers('school_holidays:all') or [])
+
+    # ============================================
     # PASSANTENDATEN
     # ============================================
     

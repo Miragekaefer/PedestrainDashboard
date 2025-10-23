@@ -113,9 +113,27 @@ async def root():
             "statistics": "/api/statistics/{street}",
             "calendar": "/api/calendar/{date}",
             "events": "/api/events/{date}",
+            "all_events": "/api/events/all_dates",
             "locations": "/api/locations"
         }
     }
+
+@app.get(
+    "/api/pedestrians/all",
+    summary="Alle historischen Passantendaten abrufen",
+    description="Ruft alle verfügbaren historischen Passantenzählungen für eine Straße ab (für Modelltraining).",
+    tags=["Pedestrian Data"]
+)
+async def get_all_historical_data(street: str):
+    if street not in ["Kaiserstraße", "Spiegelstraße", "Schönbornstraße"]:
+        raise HTTPException(status_code=400, detail="Ungültiger Straßenname")
+    
+    try:
+        # fetch everything at once using a very wide date range
+        data = redis_client.get_historical_range(street, "1900-01-01", "2100-12-31")
+        return {"street": street, "count": len(data), "data": data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get(
     "/api/streets",
@@ -339,6 +357,39 @@ async def get_calendar_info(
         raise HTTPException(status_code=400, detail="Ungültiges Datumsformat. Nutze YYYY-MM-DD")
 
 @app.get(
+    "/api/all_event_dates",
+    summary="Alle Events",
+    description="""
+    Gibt alle Events mit stündlicher Auflösung zurück.
+    
+    **Format:**
+    - `date`: Datum im Format YYYY-MM-DD
+    - `hour`: Stunde (0-23)
+    - `datetime`: Datum im Format YYYY-MM-DD HH-MM-SS
+    - `event`: Boolean ob Event vorhanden
+    - `concert`: Boolean ob Konzert vorhanden
+    
+    **Beispiel:**
+    GET /api/events/all_dates
+    """,
+    tags=["Calendar Features"]
+)
+async def get_all_events():
+    try:
+        events = redis_client.get_all_events()
+
+        print(events)
+        
+        return {
+            "count": len(events),
+            "events": events
+        }
+    
+    except Exception as e:
+        logger.error(f"Error fetching all events: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get(
     "/api/events/{date}",
     summary="Events für ein Datum",
     description="""
@@ -379,6 +430,94 @@ async def get_events_for_date(
         raise HTTPException(status_code=400, detail="Ungültiges Datumsformat")
 
 @app.get(
+    "/api/pedestrians/latest/{street}",
+    summary="Letzte aufgezeichnete Stunde für eine Straße",
+    description="""
+    Gibt das Datum und die Stunde des zuletzt aufgezeichneten Datensatzes für eine Straße zurück.
+
+    Beispiel:
+    GET /api/pedestrians/latest/Kaiserstraße
+    """,
+    tags=["Pedestrian Data"]
+)
+async def get_latest_pedestrian_record(
+    street: str = Path(..., description="Straßenname", example="Kaiserstraße")
+):
+    if street not in ["Kaiserstraße", "Spiegelstraße", "Schönbornstraße"]:
+        raise HTTPException(status_code=400, detail="Ungültiger Straßenname")
+
+    try:
+        # Hole ALLE Daten aus Redis (kann später optimiert werden)
+        all_data = redis_client.get_historical_range(street, "1900-01-01", "2100-12-31")
+
+        if not all_data:
+            raise HTTPException(status_code=404, detail=f"Keine Daten für {street} gefunden")
+
+        # Wähle den Datensatz mit dem neuesten Timestamp
+        latest = max(all_data, key=lambda x: x.get("timestamp") or "")
+
+        return {
+            "street": street,
+            "latest_record": {
+                "date": latest.get("date"),
+                "hour": int(latest.get("hour", 0)),
+                "timestamp": latest.get("timestamp")
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Fehler beim Abrufen des letzten Datensatzes für {street}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get(
+    "/api/holiday/all",
+    summary="Alle Feiertage abrufen",
+    description="Gibt alle Feiertage zurück (für Modelltraining)",
+    tags=["Calendar Features"]
+)
+async def get_all_holidays():
+    try:
+        holidays = redis_client.get_all_public_holidays()  # implement in Redis client
+        results = []
+
+        for h in holidays:
+            results.append({
+                "date": h.get("date"),
+                "is_holiday": int(h.get("is_holiday", False)),
+                "is_nationwide": int(h.get("is_nationwide", False))
+            })
+
+        return {"count": len(results), "data": results}
+    except Exception as e:
+        logger.error(f"Error fetching all holidays: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    
+@app.get(
+    "/api/lecture/all",
+    summary="Alle Vorlesungsperioden abrufen",
+    description="Gibt alle Vorlesungsperioden zurück (für Modelltraining)",
+    tags=["Calendar Features"]
+)
+async def get_all_lectures():
+    try:
+        all_dates = redis_client.get_all_lecture_dates()  # implement in Redis client
+        results = []
+
+        for date_str in all_dates:
+            info = redis_client.get_lecture_info(date_str)
+            if not info:
+                continue
+            results.append({
+                "date": date_str,
+                "is_lecture_period": int(info.get("jmu_lecture", False))
+            })
+
+        return {"count": len(results), "data": results}
+    except Exception as e:
+        logger.error(f"Error fetching all lectures: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get(
     "/api/school-holidays",
     summary="Alle Schulferien-Perioden",
     description="""
@@ -398,6 +537,22 @@ async def get_all_school_holiday_periods():
         "count": len(periods),
         "periods": periods
     }
+
+@app.get(
+    "/api/school-holiday/all",
+    summary="Alle Schulferien abrufen",
+    description="Gibt alle Schulferien zurück (für Modelltraining)",
+    tags=["Calendar Features"]
+)
+async def get_all_school_holidays():
+    try:
+        school_holidays = redis_client.get_all_school_holiday_dates()  # implement in Redis client
+        results = [{"date": d, "is_school_holiday": 1} for d in school_holidays]
+
+        return {"count": len(results), "data": results}
+    except Exception as e:
+        logger.error(f"Error fetching all school holidays: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get(
     "/api/locations",

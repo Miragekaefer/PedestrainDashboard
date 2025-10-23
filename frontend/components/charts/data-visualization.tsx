@@ -8,18 +8,21 @@ import {
   Line,
   AreaChart,
   Area,
-  BarChart,
   Bar,
   XAxis,
   YAxis,
   CartesianGrid,
   Tooltip,
   Legend,
-  ResponsiveContainer
+  ResponsiveContainer,
+  ComposedChart,
+  LabelList,
 } from 'recharts';
 import { TrendingUp, Clock, Calendar } from 'lucide-react';
 import { HourlyDataPoint, DailyDataPoint, DashboardFilters } from '@/lib/types';
 import { format } from 'date-fns';
+import { calculateDailyPeak, DailyWithPeak } from '@/components/utils/peakhourDay';
+import { calculateQuantile } from '@/components/utils/peakperiodDay';
 
 interface DataVisualizationProps {
   hourlyData: HourlyDataPoint[];
@@ -28,12 +31,16 @@ interface DataVisualizationProps {
   dateRange: DashboardFilters['dateRange'];
 }
 
+// Helper type for single-day hourly chart
+type DailyWithHour = DailyWithPeak & { hour?: number };
+
 export function DataVisualization({
   hourlyData,
   dailyData,
   loading,
-  dateRange
+  dateRange,
 }: DataVisualizationProps) {
+  // --- Loading State ---
   if (loading) {
     return (
       <Card className="animate-pulse">
@@ -48,6 +55,7 @@ export function DataVisualization({
     );
   }
 
+  // --- No Data State ---
   if (hourlyData.length === 0 && dailyData.length === 0) {
     return (
       <Card>
@@ -62,16 +70,61 @@ export function DataVisualization({
     );
   }
 
-  const formatTooltipValue = (value: number, name: string) => {
-    return [value.toLocaleString(), name === 'total' ? 'Total' : name === 'towards' ? 'Towards City' : 'Away from City'];
+  // --- 1️⃣ Compute Daily Peaks using util ---
+  const dailyWithPeaks = calculateDailyPeak(hourlyData, dailyData, dateRange.type);
+
+  type HourlyPeakChartPoint = {
+    hour: number;
+    total: number;
+    peakCount: number;
+    isPeak: boolean;
+    date?: string;
   };
 
-  const formatTooltipLabel = (label: string) => {
-    if (dateRange.type === 'day') {
-      return `${label}:00`;
-    }
-    return format(new Date(label), 'MMM dd');
-  };
+  let peakChartDataForMultiDay = dailyWithPeaks; // unchanged
+
+  let peakChartDataForSingleDay: HourlyPeakChartPoint[] | null = null;
+
+  if (dateRange.type === 'day' && dailyWithPeaks.length > 0) {
+    // Filter to the single day
+    const dayRow = dailyWithPeaks[0]; // should be just one day
+    const peakHour = dayRow?.peakHour ?? null;
+    const peakCount = dayRow?.peakCount ?? 0;
+    const theDate = dayRow?.date;
+
+    // Build a lookup by hour if hourly info exists, else fallback
+    const hourlyLike = dailyWithPeaks as DailyWithHour[];
+    const hourlyByIndex = hourlyLike.reduce<Record<number, DailyWithHour>>((acc, row, idx) => {
+      const hourKey = typeof row.hour === 'number' ? row.hour : idx;
+      acc[hourKey] = row;
+      return acc;
+    }, {});
+
+    // Build 0..23 hour points
+    peakChartDataForSingleDay = Array.from({ length: 24 }, (_, hour) => {
+      const row = hourlyByIndex[hour];
+      return {
+        hour,
+        total: row?.total ?? 0,
+        peakCount: hour === peakHour ? peakCount : 0,
+        isPeak: hour === peakHour,
+        date: theDate,
+      };
+    });
+  }
+
+  // --- 2️⃣ Compute Quantile for highlighting high hours ---
+  const hourlyDataForSingleDay = hourlyData.map((d) => ({ ...d }));
+  let quantile70 = 0;
+  if (dateRange.type === 'day' && hourlyData.length > 0) {
+    const totals = hourlyData.map((d) => d.total);
+    quantile70 = calculateQuantile(totals, 0.7);
+    hourlyDataForSingleDay.forEach((d) => (d.isHigh = d.total >= quantile70));
+  }
+  const highLineData = hourlyDataForSingleDay.map((d) => ({
+    ...d,
+    total: d.isHigh ? d.total : null,
+  }));
 
   return (
     <Card>
@@ -91,6 +144,7 @@ export function DataVisualization({
           </span>
         </div>
       </CardHeader>
+
       <CardContent>
         <Tabs defaultValue="hourly" className="w-full">
           <TabsList className="grid w-full grid-cols-2">
@@ -98,79 +152,148 @@ export function DataVisualization({
               <Clock className="h-4 w-4" />
               <span>Hourly Pattern</span>
             </TabsTrigger>
-            <TabsTrigger value="daily" className="flex items-center space-x-2">
+            <TabsTrigger value="special" className="flex items-center space-x-2">
               <Calendar className="h-4 w-4" />
-              <span>Daily Trends</span>
+              <span>Peak Days</span>
             </TabsTrigger>
           </TabsList>
 
+          {/* Hourly Pattern */}
           <TabsContent value="hourly" className="space-y-4">
             <div className="h-96">
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={hourlyData}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis
-                    dataKey="hour"
-                    tickFormatter={(value) => `${value}:00`}
-                  />
-                  <YAxis />
-                  <Tooltip
-                    formatter={formatTooltipValue}
-                    labelFormatter={formatTooltipLabel}
-                  />
-                  <Legend />
-                  <Area
-                    type="monotone"
-                    dataKey="towards"
-                    stackId="1"
-                    stroke="#8884d8"
-                    fill="#8884d8"
-                    name="Towards City"
-                  />
-                  <Area
-                    type="monotone"
-                    dataKey="away"
-                    stackId="1"
-                    stroke="#82ca9d"
-                    fill="#82ca9d"
-                    name="Away from City"
-                  />
-                </AreaChart>
+                {dateRange.type === 'day' ? (
+                  <LineChart data={hourlyDataForSingleDay}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="hour" tickFormatter={(v) => `${v}:00`} />
+                    <YAxis />
+                    <Tooltip
+                      formatter={(value: number) => [value.toLocaleString(), 'Pedestrians']}
+                      labelFormatter={(label) =>
+                        typeof label === 'number' ? `${label}:00` : String(label)
+                      }
+                    />
+                    <Legend />
+                    <Line type="monotone" dataKey="total" stroke="#8884d8" strokeWidth={2} dot={false} />
+                    <Line
+                      type="monotone"
+                      data={highLineData}
+                      dataKey="total"
+                      stroke="#FF4C4C"
+                      strokeWidth={2}
+                      dot={false}
+                      name="High Traffic Hours"
+                    />
+                  </LineChart>
+                ) : (
+                  <AreaChart data={hourlyData}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="hour" tickFormatter={(v) => `${v}:00`} />
+                    <YAxis />
+                    <Tooltip
+                      formatter={(value: number, name: string) => [
+                        value.toLocaleString(),
+                        name === 'total'
+                          ? 'Total'
+                          : name === 'towards'
+                          ? 'Towards City'
+                          : 'Away from City',
+                      ]}
+                    />
+                    <Legend />
+                    <Area
+                      type="monotone"
+                      dataKey="towards"
+                      stackId="1"
+                      stroke="#8884d8"
+                      fill="#8884d8"
+                      name="Towards City"
+                    />
+                    <Area
+                      type="monotone"
+                      dataKey="away"
+                      stackId="1"
+                      stroke="#82ca9d"
+                      fill="#82ca9d"
+                      name="Away from City"
+                    />
+                  </AreaChart>
+                )}
               </ResponsiveContainer>
             </div>
           </TabsContent>
 
-          <TabsContent value="daily" className="space-y-4">
+          {/* Peak Days */}
+          <TabsContent value="special" className="space-y-4">
             <div className="h-96">
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={dailyData}>
+                <ComposedChart
+                  data={dateRange.type === 'day' ? peakChartDataForSingleDay ?? [] : peakChartDataForMultiDay}
+                >
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis
-                    dataKey="date"
-                    tickFormatter={(value) => format(new Date(value), 'MMM dd')}
+                    dataKey={dateRange.type === 'day' ? 'hour' : 'date'}
+                    tickFormatter={(value) =>
+                      dateRange.type === 'day'
+                        ? `${value}:00`
+                        : (() => {
+                            const d = new Date(String(value));
+                            return isNaN(d.getTime()) ? String(value) : format(d, 'MMM dd');
+                          })()
+                    }
                   />
                   <YAxis />
                   <Tooltip
-                    formatter={(value: number) => [value.toLocaleString(), 'Total Pedestrians']}
-                    labelFormatter={(label) => format(new Date(label), 'PPP')}
+                    formatter={(value: number, name: string, entry: any) => {
+                      if (name === 'peakCount') {
+                        const hourLabel =
+                          dateRange.type === 'day'
+                            ? `${entry?.payload?.hour ?? ''}:00`
+                            : `Peak Hour: ${entry?.payload?.peakHour ?? ''}:00`;
+                        return [value.toLocaleString(), hourLabel];
+                      }
+                      return [value.toLocaleString(), name];
+                    }}
                   />
                   <Legend />
+                  <Bar
+                    dataKey="peakCount"
+                    barSize={dateRange.type === 'day' ? 18 : 24}
+                    fill="rgba(255, 76, 76, 0.5)"
+                    name="Peak Hour Count"
+                    radius={[4, 4, 0, 0]}
+                  >
+                    <LabelList
+                      dataKey="peakCount"
+                      content={(props) => {
+                        const { x, y, width, value } = props;
+                        if (!value || value === 0) return null;
+                        const textX = x! + width! / 2;
+                        const textY = y! - 6;
+                        return (
+                          <text
+                            x={textX}
+                            y={textY}
+                            fill="#FF0000"
+                            fontSize={12}
+                            textAnchor="middle"
+                          >
+                            {value}
+                          </text>
+                        );
+                      }}
+                    />
+                  </Bar>
+
                   <Line
                     type="monotone"
                     dataKey="total"
-                    stroke="#8884d8"
+                    stroke="#3366cc"
                     strokeWidth={2}
                     name="Total Pedestrians"
+                    dot={{ r: 3 }}
                   />
-                  <Line
-                    type="monotone"
-                    dataKey="avgHourly"
-                    stroke="#82ca9d"
-                    strokeWidth={2}
-                    strokeDasharray="5 5"
-                    name="Avg per Hour"
-                  />
-                </LineChart>
+                </ComposedChart>
               </ResponsiveContainer>
             </div>
           </TabsContent>

@@ -20,6 +20,7 @@ from scripts.import_data_all_streets import import_data_all_streets_to_redis
 from data_ingestion.api_fetcher import APIFetcher
 from database.redis_client import PedestrianRedisClient
 import config
+from scripts.build_indexes import build_sorted_set_indexes
 
 def wait_for_redis(max_attempts=30):
     """Wartet bis Redis bereit ist"""
@@ -231,6 +232,27 @@ def main():
                 'duration': 0
             })
     
+    # Baue Indizes für alle vorhandenen Straßen/Keys
+    print(f"\n[{len(scripts)+2}/{len(scripts)+2}] Building indexes")
+    print("-" * 70)
+    try:
+        start_time = time.time()
+        # Ohne Übergabe -> dynamisch alle Straßen ermitteln und indexieren
+        build_sorted_set_indexes()
+        duration = time.time() - start_time
+        results.append({
+            'name': 'Build Indexes',
+            'status': '✓ SUCCESS',
+            'duration': duration
+        })
+    except Exception as e:
+        print(f"✗ FAILED to build indexes: {e}")
+        results.append({
+            'name': 'Build Indexes',
+            'status': f'✗ FAILED: {str(e)[:50]}',
+            'duration': 0
+        })
+
     # Summary
     print("\n" + "="*70)
     print(" IMPORT SUMMARY")
