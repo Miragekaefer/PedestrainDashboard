@@ -160,25 +160,23 @@ class PedestrianAPI {
 
   // Data transformation helpers
   transformToHourlyData(data: PedestrianData[], date?: string): HourlyDataPoint[] {
-    const hourlyGroups = data.reduce((acc, item) => {
-      const hour = parseInt(item.hour);
-      if (!acc[hour]) {
-        acc[hour] = { total: 0, towards: 0, away: 0, count: 0 };
-      }
-      acc[hour].total += item.n_pedestrians;
-      acc[hour].towards += item.n_pedestrians_towards;
-      acc[hour].away += item.n_pedestrians_away;
-      acc[hour].count += 1;
-      return acc;
-    }, {} as Record<number, { total: number; towards: number; away: number; count: number }>);
-
-    return Object.entries(hourlyGroups).map(([hour, data]) => ({
-      hour: parseInt(hour),
-      total: Math.round(data.total / data.count),
-      towards: Math.round(data.towards / data.count),
-      away: Math.round(data.away / data.count),
-      date: date || 'All'
+    // Group by date and hour to preserve daily patterns
+    const hourlyData = data.map(item => ({
+      hour: parseInt(item.hour),
+      total: item.n_pedestrians,
+      towards: item.n_pedestrians_towards,
+      away: item.n_pedestrians_away,
+      date: item.date
     }));
+
+    // Sort by date and hour
+    hourlyData.sort((a, b) => {
+      const dateCompare = a.date.localeCompare(b.date);
+      if (dateCompare !== 0) return dateCompare;
+      return a.hour - b.hour;
+    });
+
+    return hourlyData;
   }
 
   transformToDailyData(data: PedestrianData[]): DailyDataPoint[] {
