@@ -50,6 +50,13 @@ export function DataVisualization({
     );
   }
 
+  console.log('[DataVisualization] Props:', {
+  dateRange,
+  hourlyDataLength: hourlyData.length,
+  dailyDataLength: dailyData.length,
+  dailyWithPeaksSample: dailyWithPeaks?.slice(0, 3),
+  });
+
   return (
     <Card>
       <CardHeader>
@@ -82,12 +89,13 @@ export function DataVisualization({
             </TabsTrigger>
           </TabsList>
 
-          <TabsContent value="hourly">
-            <HourlyChart
-              hourlyData={hourlyData}
-              dateRange={dateRange}
-            />
-          </TabsContent>
+        <TabsContent value="hourly">
+          <HourlyChart
+            hourlyData={hourlyData}
+            dailyWithPeaks={dailyWithPeaks}
+            dateRange={dateRange}
+          />
+        </TabsContent>
 
           <TabsContent value="special">
             <PeakDaysChart

@@ -5,8 +5,8 @@ import numpy as np
 from sklearn.preprocessing import LabelEncoder
 from datetime import datetime, timedelta
 import requests
-from database.redis_client import PedestrianRedisClient
-import config
+from backend.database.redis_client import PedestrianRedisClient
+import backend.config as config
 
 API_KEY = os.getenv("OPENWEATHER_API_KEY")
 if not API_KEY:
@@ -248,8 +248,8 @@ def create_weather_features(df):
     return df
 
 def add_wurzburg_events(df):
-    eventsDf = pd.read_csv("data/events_daily.csv")
-    lecturesDf = pd.read_csv("data/lectures_daily.csv")
+    eventsDf = pd.read_csv("backend/data/events_daily.csv")
+    lecturesDf = pd.read_csv("backend/data/lectures_daily.csv")
 
     # Split up date in eventsDf into date and hour
     eventsDf['hour'] = pd.to_datetime(eventsDf['date']).dt.hour.astype('int64')
@@ -263,8 +263,8 @@ def add_wurzburg_events(df):
     return df
 
 def add_enhanced_holiday_features(df):
-    publicHolidaysDf = pd.read_csv("data/bavarian_public_holidays_daily.csv")
-    schoolHolidaysDf = pd.read_csv("data/bavarian_school_holidays_daily.csv")
+    publicHolidaysDf = pd.read_csv("backend/data/bavarian_public_holidays_daily.csv")
+    schoolHolidaysDf = pd.read_csv("backend/data/bavarian_school_holidays_daily.csv")
 
     df = df.merge(publicHolidaysDf, on='date', how='left')
 
@@ -442,9 +442,9 @@ def run_predictions_and_store():
 
 if __name__ == "__main__":
 
-    API_KEY = os.getenv("OPENWEATHER_API_KEY", "YOUR_FALLBACK_API_KEY")  # or load from env var
-    MODEL_PATH = "ML/models/trained_model.pkl"
-    OUTPUT_CSV = "data/future_predictions.csv"
+    API_KEY = os.getenv("OPENWEATHER_API_KEY")  # or load from env var
+    MODEL_PATH = "backend/ML/models/trained_model.pkl"
+    OUTPUT_CSV = "backend/data/future_predictions.csv"
 
     now = datetime.now()
     latest_date = now.strftime("%Y-%m-%d")
