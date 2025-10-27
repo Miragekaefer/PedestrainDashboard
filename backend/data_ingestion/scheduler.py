@@ -107,16 +107,16 @@ def fetch_hourly_updates():
         logger.error(f"Hourly update failed: {e}", exc_info=True)
 
 @scheduler.scheduled_job(
-    CronTrigger(hour='*/3', minute=5),  # Every 3 hours at :05
+    CronTrigger(minute=1),  # Every hour at :01
     misfire_grace_time=300
 )
 def fetch_predictions():
-    """Runs ML predictions every 3 hours and uploads results to Redis."""
-    logger.info("\n------ 3-HOURLY PREDICTION ------")
+    """Runs ML predictions every hour and uploads results to Redis."""
+    logger.info("\n------ HOURLY PREDICTION ------")
     try:
         from ML.predict import run_predictions_and_store
-        run_predictions_and_store()
-        logger.info("✓ Predictions updated in Redis")
+        count = run_predictions_and_store()
+        logger.info(f"✓ {count} predictions updated in Redis")
     except Exception as e:
         logger.error(f"Prediction update failed: {e}", exc_info=True)
 
@@ -151,7 +151,7 @@ if __name__ == "__main__":
     logger.info("""
     ╔════════════════════════════════════════════════════════════╗
     ║   PEDESTRIAN DATA SCHEDULER                                ║
-    ║   Intelligent data + ML prediction orchestration            ║
+    ║   Intelligent data + ML prediction orchestration           ║
     ╚════════════════════════════════════════════════════════════╝
     """)
 

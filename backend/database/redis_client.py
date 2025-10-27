@@ -3,7 +3,7 @@ import redis
 import json
 from typing import List, Dict, Optional
 from datetime import datetime, timedelta
-import backend.config as config
+import config 
 
 class PedestrianRedisClient:
     def __init__(self, host='localhost', port=6379, db=0):
@@ -234,26 +234,150 @@ class PedestrianRedisClient:
     # PREDICTIONS
     # ============================================
     
-    def store_prediction(self, street: str, date: str, hour: int, prediction: Dict):
-        """Speichert Vorhersage"""
-        key = f"prediction:{street}:{date}:{hour}"
-        self.client.hset(key, mapping=prediction)
-        self.client.expire(key, 60*60*24*30)  # 30 Tage TTL
-    
-    def get_predictions(self, street: str, hours_ahead: int = 168) -> List[Dict]:
-        """Holt Vorhersagen für die nächsten X Stunden"""
-        now = datetime.now()
-        results = []
+    def get_prediction_range(self, street: str, start_date: str, end_date: str) -> List[Dict]:
+        """
+        Retrieves predictions for a street within a date range.
+        Unlike historical data, predictions may not have complete 24-hour coverage.
         
-        for i in range(hours_ahead):
-            future = now + timedelta(hours=i)
-            key = f"prediction:{street}:{future.date()}:{future.hour}"
-            data = self.client.hgetall(key)
-            if data:
-                data['datetime'] = future.isoformat()
-                results.append(data)
+        Args:
+            street: Street name
+            start_date: Start date (YYYY-MM-DD)
+            end_date: End date (YYYY-MM-DD)
         
-        return results
+        Returns:
+            List of prediction dictionaries sorted by timestamp
+        """
+        try:
+            start = datetime.strptime(start_date, '%Y-%m-%d')
+            end = datetime.strptime(end_date, '%Y-%m-%d')
+            
+            predictions = []
+            current_date = start
+            
+            # Build list of keys to check
+            keys_to_check = []
+            while current_date <= end:
+                date_str = current_date.strftime('%Y-%m-%d')
+                
+                # Check all 24 hours for each day
+                for hour in range(24):
+                    key = f"pedestrian:hourly:prediction:{street}:{date_str}:{hour}"
+                    keys_to_check.append(key)
+                
+                current_date += timedelta(days=1)
+            
+            # Use pipeline for efficiency (batch Redis calls)
+            if keys_to_check:
+                pipe = self.client.pipeline()
+                for key in keys_to_check:
+                    pipe.exists(key)
+                
+                # Check which keys exist
+                existence_checks = pipe.execute()
+                
+                # Only fetch data for existing keys
+                existing_keys = [key for key, exists in zip(keys_to_check, existence_checks) if exists]
+                
+                if existing_keys:
+                    pipe = self.client.pipeline()
+                    for key in existing_keys:
+                        pipe.hgetall(key)
+                    
+                    results = pipe.execute()
+                    predictions = [r for r in results if r]
+            
+            # Sort by timestamp
+            return sorted(predictions, key=lambda x: (x.get('date', ''), int(x.get('hour', 0))))
+        
+        except Exception as e:
+            print(f"Error fetching predictions for {street}: {e}")
+            return []
+
+
+    def get_prediction_count(self, street: Optional[str] = None) -> int:
+        """
+        Count available predictions.
+        
+        Args:
+            street: Optional street name. If None, counts all predictions.
+        
+        Returns:
+            Number of prediction records
+        """
+        try:
+            if street:
+                pattern = f"pedestrian:hourly:prediction:{street}:*"
+            else:
+                pattern = "pedestrian:hourly:prediction:*"
+            
+            count = 0
+            cursor = 0
+            
+            while True:
+                cursor, keys = self.client.scan(
+                    cursor=cursor,
+                    match=pattern,
+                    count=1000
+                )
+                count += len(keys)
+                
+                if cursor == 0:
+                    break
+            
+            return count
+        
+        except Exception as e:
+            print(f"Error counting predictions: {e}")
+            return 0
+
+
+    def get_latest_prediction_timestamp(self, street: str) -> Optional[str]:
+        """
+        Get the timestamp of the latest available prediction for a street.
+        
+        Args:
+            street: Street name
+        
+        Returns:
+            ISO timestamp string or None
+        """
+        try:
+            pattern = f"pedestrian:hourly:prediction:{street}:*"
+            
+            # Scan for all prediction keys
+            all_keys = []
+            cursor = 0
+            
+            while True:
+                cursor, keys = self.client.scan(
+                    cursor=cursor,
+                    match=pattern,
+                    count=1000
+                )
+                all_keys.extend(keys)
+                
+                if cursor == 0:
+                    break
+            
+            if not all_keys:
+                return None
+            
+            # Get timestamps using pipeline
+            pipe = self.client.pipeline()
+            for key in all_keys:
+                pipe.hget(key, 'timestamp')
+            
+            timestamps = pipe.execute()
+            valid_timestamps = [ts for ts in timestamps if ts]
+            
+            if valid_timestamps:
+                return max(valid_timestamps)
+            
+            return None
+        
+        except Exception as e:
+            print(f"Error getting latest prediction timestamp: {e}")
+            return None
     
     # ============================================
     # FEIERTAGE
