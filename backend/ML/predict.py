@@ -1,12 +1,21 @@
+# backend/ML/predict.py
+import sys
+sys.path.append('/app')
+
+import redis
 import pandas as pd
+import numpy as np
+
 import os
 import pickle
-import numpy as np
 from sklearn.preprocessing import LabelEncoder
 from datetime import datetime, timedelta
 import requests
-from backend.database.redis_client import PedestrianRedisClient
-import backend.config as config
+from database.redis_client import PedestrianRedisClient
+import config
+import logging
+
+logger = logging.getLogger(__name__)
 
 API_KEY = os.getenv("OPENWEATHER_API_KEY")
 if not API_KEY:
@@ -175,7 +184,6 @@ def generate_future_dataset_from_latest(latest_date: str, latest_hour: int, api_
 
     return pd.DataFrame(future_entries)
 
-
 def create_lag_features(df, target_cols, lag_hours=[1, 2, 3, 24, 168], rolling_windows=[3, 6, 12, 24], is_train=True):
     df = df.copy()
     df = df.sort_values(['streetname', 'datetime'])
@@ -248,8 +256,8 @@ def create_weather_features(df):
     return df
 
 def add_wurzburg_events(df):
-    eventsDf = pd.read_csv("backend/data/events_daily.csv")
-    lecturesDf = pd.read_csv("backend/data/lectures_daily.csv")
+    eventsDf = pd.read_csv("data/events_daily.csv")
+    lecturesDf = pd.read_csv("data/lectures_daily.csv")
 
     # Split up date in eventsDf into date and hour
     eventsDf['hour'] = pd.to_datetime(eventsDf['date']).dt.hour.astype('int64')
@@ -263,8 +271,8 @@ def add_wurzburg_events(df):
     return df
 
 def add_enhanced_holiday_features(df):
-    publicHolidaysDf = pd.read_csv("backend/data/bavarian_public_holidays_daily.csv")
-    schoolHolidaysDf = pd.read_csv("backend/data/bavarian_school_holidays_daily.csv")
+    publicHolidaysDf = pd.read_csv("data/bavarian_public_holidays_daily.csv")
+    schoolHolidaysDf = pd.read_csv("data/bavarian_school_holidays_daily.csv")
 
     df = df.merge(publicHolidaysDf, on='date', how='left')
 
@@ -364,7 +372,6 @@ def get_feature_columns(df):
     
     return [col for col in df.select_dtypes(include=['int64', 'float64']).columns if col not in exclude_cols]
 
-
 def predict_model(input_csv: str, model_path: str, output_csv: str = "predictions.csv"):
     """
     Predict using a trained model on new data.
@@ -390,101 +397,106 @@ def predict_model(input_csv: str, model_path: str, output_csv: str = "prediction
     return df
 
 def run_predictions_and_store():
-    from datetime import datetime
-    import pandas as pd
-
-    redis_client = PedestrianRedisClient(host=config.REDIS_HOST, port=config.REDIS_PORT)
-
-    # Generate future prediction dataset
-    now = datetime.now()
-    latest_date = now.strftime("%Y-%m-%d")
-    latest_hour = now.hour
-
-    df_future = generate_future_dataset_from_latest(
-        latest_date=latest_date,
-        latest_hour=latest_hour,
-        api_key=os.getenv("OPENWEATHER_API_KEY"),
-        hours_ahead=24*8
+    # Redis connection
+    r = redis.Redis(
+        host=config.REDIS_HOST,
+        port=config.REDIS_PORT,
+        db=0,
+        decode_responses=True
     )
 
-    # Feature engineering
-    df_features = create_all_features(df_future, is_train=False)
+    logger.info("Starting prediction generation...")
 
-    # Load model
-    MODEL_PATH = "backend/ML/models/trained_model.pkl"
-    with open(MODEL_PATH, "rb") as f:
-        model, feature_cols = pickle.load(f)
+    #Street name mapping
+    street_mapping = {
+        'Kaiserstrasse': 'Kaiserstraße',
+        'Spiegelstrasse': 'Spiegelstraße',
+        'Schoenbornstrasse': 'Schönbornstraße'
+    }
 
-    X_future = df_features[feature_cols]
-    df_features["n_pedestrians"] = model.predict(X_future)
+    MODEL_PATH= "ML/models/trained_model.pkl"
 
-    # Push predictions to Redis
-    for _, row in df_features.iterrows():
-        redis_client.store_prediction(
-            street=row['streetname'],
-            date=row['date'],
-            hour=row['hour'],
-            prediction={
-                "id": row['id'],
-                "streetname": row['streetname'],
-                "date": row['date'],
-                "hour": row['hour'],
-                "n_pedestrians": int(row['n_pedestrians']),
-                "temperature": row['temperature'],
-                "weather_condition": row['weather_condition']
-            }
+    try:
+        # GENERATE FUTURE DATA
+        now = datetime.now()
+        latest_date = now.strftime("%Y-%m-%d")
+        latest_hour = now.hour
+
+        logger.info(f"Generating forecast from {latest_date} at hour {latest_hour}")
+
+        df_future = generate_future_dataset_from_latest(
+            latest_date=latest_date,
+            latest_hour=latest_hour,
+            api_key=API_KEY,
+            hours_ahead=24 * 8  # 8 days ahead
         )
 
-    print(f"✓ Uploaded {len(df_features)} predictions to Redis")
-    return df_features
+        # FEATURE ENGINEERING
+        logging.info("Creating features...")
+        df_features = create_all_features(df_future, is_train=False)
 
-# Run prediction
+        # LOAD MODEL AND PREDICT
+        print(" Loading trained model...")
+        with open(MODEL_PATH, "rb") as f:
+            model, feature_cols = pickle.load(f)
 
+        print(" Predicting future pedestrian counts...")
+        X_future = df_features[feature_cols]
+        df_features["n_pedestrians"] = model.predict(X_future)
+
+        # STORE PREDICTIONS IN REDIS
+        total_predictions = 0
+
+        base_cols = [
+            'id', 'streetname', 'date', 'hour', 'temperature', 'weather_condition',
+            'incidents', 'weekday', 'collection_type', 'city'
+        ]
+        df_output = df_features[base_cols + ['n_pedestrians']].copy()
+
+        for _, row in df_output.iterrows():
+            street_normalized = street_mapping.get(row["streetname"], row["streetname"])
+            date = row["date"]
+            hour = str(int(row["hour"]))
+
+            # PREDICTION key prefix
+            key = f"pedestrian:hourly:prediction:{street_normalized}:{date}:{hour}"
+
+            # Build data dict
+            data = {
+                "id": row["id"],
+                "street": street_normalized,
+                "city": row["city"],
+                "date": date,
+                "hour": hour,
+                "weekday": row["weekday"],
+                "n_pedestrians": str(round(row["n_pedestrians"])),
+                "temperature": str(round(row["temperature"])),
+                "weather_condition": row["weather_condition"],
+                "incidents": row["incidents"],
+                'collection_type': row['collection_type'],
+                "data_type": "prediction",
+                "generated_at": datetime.now().isoformat()
+            }
+
+            # Remove null values
+            data = {k: v for k, v in data.items() if pd.notna(v) and str(v).strip()}
+
+            # Store in Redis
+            r.hset(key, mapping=data)
+            r.expire(key, 60 * 60 * 24 * 9) # 9-days
+
+            # Counter
+            total_predictions += 1
+        
+        logger.info(f"Total predictions stored: {total_predictions}")
+
+        return total_predictions
+
+    except Exception as e:
+        logger.error(f"Error during prediction generation: {e}", exc_info=True)
+        raise
+
+# Run prediction standalone for testing
 if __name__ == "__main__":
-
-    API_KEY = os.getenv("OPENWEATHER_API_KEY")  # or load from env var
-    MODEL_PATH = "backend/ML/models/trained_model.pkl"
-    OUTPUT_CSV = "backend/data/future_predictions.csv"
-
-    now = datetime.now()
-    latest_date = now.strftime("%Y-%m-%d")
-    latest_hour = now.hour
-    print(f" Starting forecast from {latest_date} at hour {latest_hour}")
-
-    # GENERATE FUTURE DATA
-
-    df_future = generate_future_dataset_from_latest(
-        latest_date=latest_date,
-        latest_hour=latest_hour,
-        api_key=API_KEY,
-        hours_ahead=24 * 8  # 8 days ahead
-    )
-
-    # FEATURE ENGINEERING
-
-    print(" Creating features...")
-    df_features = create_all_features(df_future, is_train=False)
-
-    # LOAD MODEL
-
-    print(" Loading trained model...")
-    with open(MODEL_PATH, "rb") as f:
-        model, feature_cols = pickle.load(f)
-
-    # PREDICT FUTURE COUNTS
-
-    print(" Predicting future pedestrian counts...")
-    X_future = df_features[feature_cols]
-    df_features["n_pedestrians"] = model.predict(X_future)
-
-    # SAVE OUTPUT
-
-    base_cols = [
-        'id', 'streetname', 'date', 'hour', 'temperature', 'weather_condition',
-        'incidents', 'weekday', 'collection_type', 'city'
-    ]
-    df_output = df_features[base_cols + ['n_pedestrians']].copy()
-    df_output.to_csv(OUTPUT_CSV, index=False)
-
-    print(f" Future predictions saved to {OUTPUT_CSV}")
-    print(df_output.head())
+    logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(levelname)s - %(message)s')
+    run_predictions_and_store()
