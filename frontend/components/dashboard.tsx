@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { TrendingUp, MapPin } from 'lucide-react';
-import { DashboardFilters, StatisticsData, HourlyDataPoint, DailyDataPoint, CalendarEvent, PedestrianData } from '@/lib/types';
+import { DashboardFilters, StatisticsData, HourlyDataPoint, DailyDataPoint, CalendarEvent } from '@/lib/types';
 import { pedestrianAPI } from '@/lib/api';
 import { StreetFilter } from './filters/street-filter';
 import { DateFilter } from './filters/date-filter';
@@ -69,11 +69,11 @@ export function Dashboard() {
         const promises = dates.map(async (date) => {
           const dateStr = date.toISOString().split('T')[0];
           try {
-            const eventsInfo = await pedestrianAPI.getEventsForDate(dateStr);
+            const eventsInfo: any = await pedestrianAPI.getEventsForDate(dateStr);
             const dateEvents: CalendarEvent[] = [];
 
             if (eventsInfo && Array.isArray(eventsInfo.events)) {
-              eventsInfo.events.forEach((evt) => {
+              eventsInfo.events.forEach((evt: any) => {
                 dateEvents.push({
                   date: new Date(date),
                   type: evt.is_concert ? 'concert' : 'event',
@@ -113,7 +113,7 @@ const loadData = async () => {
     const startDate = start.toISOString().split('T')[0];
     const endDate = end.toISOString().split('T')[0];
 
-    let combinedData: PedestrianData[] = [];
+    let combinedData: any[] = [];
     let combinedStats: StatisticsData = {
       totalPedestrians: 0,
       avgHourlyCount: 0,
