@@ -28,6 +28,7 @@ export function Dashboard() {
   const [statistics, setStatistics] = useState<StatisticsData | null>(null);
   const [hourlyData, setHourlyData] = useState<HourlyDataPoint[]>([]);
   const [dailyData, setDailyData] = useState<DailyDataPoint[]>([]);
+  const [currentWeather, setCurrentWeather] = useState<{ condition?: string; temperature?: number } | null>(null);
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
   const [streets, setStreets] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -74,6 +75,37 @@ export function Dashboard() {
         setHourlyData(hourlyChartData);
         setDailyData(dailyChartData);
 
+        // Determine representative/current weather only when a single day is selected
+        try {
+          if (filters.dateRange.type === 'day') {
+            const targetDate = startDate; // YYYY-MM-DD from filters
+            const dayRecords = historicalResponse.data.filter(r => r.date === targetDate);
+            if (dayRecords && dayRecords.length > 0) {
+              // average temperature for the day (if available)
+              const temps = dayRecords.map(d => d.temperature).filter(t => t !== null && t !== undefined) as number[];
+              const avgTemp = temps.length ? temps.reduce((a, b) => a + b, 0) / temps.length : undefined;
+
+              // most frequent weather condition
+              const conds = dayRecords.map(d => d.weather_condition).filter(Boolean) as string[];
+              let mode: string | undefined = undefined;
+              if (conds.length > 0) {
+                const counts: Record<string, number> = {};
+                conds.forEach(c => { counts[c] = (counts[c] || 0) + 1; });
+                mode = Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0];
+              }
+
+              setCurrentWeather({ condition: mode, temperature: avgTemp });
+            } else {
+              setCurrentWeather(null);
+            }
+          } else {
+            // for week/month selections we don't show specific weather
+            setCurrentWeather(null);
+          }
+        } catch (err) {
+          console.warn('Failed to compute current weather:', err);
+          setCurrentWeather(null);
+        }
         // Generate calendar events for the date range
         await loadCalendarEvents();
 
@@ -272,6 +304,8 @@ export function Dashboard() {
                 statistics={statistics}
                 loading={loading}
                 street={filters.street}
+                currentWeather={currentWeather}
+                showWeather={filters.dateRange.type === 'day'}
               />
 
               {/* Charts Section */}

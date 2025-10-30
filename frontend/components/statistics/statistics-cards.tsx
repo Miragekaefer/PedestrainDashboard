@@ -9,9 +9,11 @@ interface StatisticsCardsProps {
   statistics: StatisticsData | null;
   loading: boolean;
   street: string;
+  currentWeather?: { condition?: string; temperature?: number } | null;
+  showWeather?: boolean;
 }
 
-export function StatisticsCards({ statistics, loading, street }: StatisticsCardsProps) {
+export function StatisticsCards({ statistics, loading, street, currentWeather, showWeather = true }: StatisticsCardsProps) {
   if (loading) {
     return (
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -58,6 +60,18 @@ export function StatisticsCards({ statistics, loading, street }: StatisticsCards
       case 'high': return 'destructive';
       case 'medium': return 'secondary';
       default: return 'outline';
+    }
+  };
+
+  // Tailwind background/text classes for each impact level
+  const getWeatherImpactBgClass = (impact: string) => {
+    switch (impact) {
+      case 'high':
+        return 'bg-red-600 text-white';
+      case 'medium':
+        return 'bg-yellow-400 text-black';
+      default:
+        return 'bg-gray-200 text-gray-800';
     }
   };
 
@@ -124,9 +138,25 @@ export function StatisticsCards({ statistics, loading, street }: StatisticsCards
           <Activity className="h-4 w-4 text-muted-foreground" />
         </CardHeader>
         <CardContent>
-          <Badge variant={getWeatherImpactColor(statistics.weatherImpact)} className="mb-2">
+          {showWeather && currentWeather ? (
+            <div className="mb-2">
+              <div className="flex items-center space-x-3">
+                <div className="text-sm font-medium">
+                  {currentWeather.temperature !== undefined ? `${Math.round(currentWeather.temperature)}°C` : '—'}
+                </div>
+                <div className="text-xs text-muted-foreground capitalize">
+                  {currentWeather.condition || 'Unknown'}
+                </div>
+              </div>
+            </div>
+          ) : showWeather && !currentWeather ? (
+            <p className="text-xs text-muted-foreground mb-2">Current weather not available</p>
+          ) : null}
+
+          <Badge variant={getWeatherImpactColor(statistics.weatherImpact)} className={`mb-2 ${getWeatherImpactBgClass(statistics.weatherImpact)}`}>
             {getWeatherImpactText(statistics.weatherImpact)}
           </Badge>
+
           <p className="text-xs text-muted-foreground">
             on pedestrian count
           </p>
