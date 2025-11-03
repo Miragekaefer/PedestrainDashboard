@@ -1,304 +1,352 @@
-'use client';
+"use client";
 
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Badge } from '@/components/ui/badge';
+import React, { useMemo, useState } from 'react';
+import type { HourlyDataPoint, DailyDataPoint } from '@/lib/types';
 import {
+  ResponsiveContainer,
   LineChart,
   Line,
-  AreaChart,
-  Area,
-  Bar,
   XAxis,
   YAxis,
   CartesianGrid,
   Tooltip,
   Legend,
-  ResponsiveContainer,
   ComposedChart,
-  LabelList,
+  Bar,
+  PieChart,
+  Pie,
+  Cell,
+  ReferenceDot,
 } from 'recharts';
-import { TrendingUp, Clock, Calendar } from 'lucide-react';
-import { HourlyDataPoint, DailyDataPoint, DashboardFilters } from '@/lib/types';
-import { format } from 'date-fns';
-import { calculateDailyPeak, DailyWithPeak } from '@/components/utils/peakhourDay';
-import { calculateQuantile } from '@/components/utils/peakperiodDay';
+import { format, parseISO } from 'date-fns';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Button } from '@/components/ui/button';
 
-interface DataVisualizationProps {
+type Props = {
   hourlyData: HourlyDataPoint[];
   dailyData: DailyDataPoint[];
-  loading: boolean;
-  dateRange: DashboardFilters['dateRange'];
+  hourlyPredictions?: HourlyDataPoint[];
+  dailyPredictions?: DailyDataPoint[];
+  loading?: boolean;
+  dateRange?: any;
+  // optional advanced props the dashboard can provide:
+  streetTotals?: { street: string; total: number }[]; // for pie chart when all streets
+  comparisonSeries?: { key: string; name: string; data: any[]; color?: string; opacity?: number }[]; // overlay series
+};
+
+// ---------- Data Builders (unchanged but slightly hardened) ----------
+function buildCombinedHourly(actual: HourlyDataPoint[] = [], predicted: HourlyDataPoint[] = []) {
+  const map = new Map<string, { date: string; hour: number; actual?: number | null; predicted?: number | null }>();
+  const keyFor = (date: string, hour: number) => `${date}__${String(hour).padStart(2, '0')}`;
+
+  (actual || []).forEach((d) => {
+    const key = keyFor(d.date, Number(d.hour));
+    if (!map.has(key)) map.set(key, { date: d.date, hour: Number(d.hour) });
+    const e = map.get(key)!;
+    e.actual = (e.actual ?? 0) + Number(d.total ?? 0);
+  });
+
+  (predicted || []).forEach((d) => {
+    const key = keyFor(d.date, Number(d.hour));
+    if (!map.has(key)) map.set(key, { date: d.date, hour: Number(d.hour) });
+    const e = map.get(key)!;
+    // use null when not present to allow conditional rendering
+    e.predicted = (e.predicted ?? 0) + Number(d.total ?? 0);
+  });
+
+  return Array.from(map.values())
+    .sort((a, b) => (a.date === b.date ? a.hour - b.hour : a.date.localeCompare(b.date)))
+    .map((d) => ({
+      ...d,
+      actual: d.actual ?? 0,
+      predicted: d.predicted == null ? null : d.predicted,
+    }));
 }
 
-// Helper type for single-day hourly chart
-type DailyWithHour = DailyWithPeak & { hour?: number };
+function buildCombinedDaily(actual: DailyDataPoint[] = [], predicted: DailyDataPoint[] = []) {
+  const map = new Map<string, { date: string; actual?: number | null; predicted?: number | null; weekday?: string }>();
 
-export function DataVisualization({
+  (actual || []).forEach((d) => {
+    if (!map.has(d.date)) map.set(d.date, { date: d.date, actual: 0, predicted: null, weekday: d.weekday });
+    const e = map.get(d.date)!;
+    e.actual = (e.actual ?? 0) + Number(d.total ?? 0);
+  });
+
+  (predicted || []).forEach((d) => {
+    if (!map.has(d.date)) map.set(d.date, { date: d.date, actual: null, predicted: 0, weekday: d.weekday });
+    const e = map.get(d.date)!;
+    e.predicted = (e.predicted ?? 0) + Number(d.total ?? 0);
+  });
+
+  return Array.from(map.values())
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .map((d) => ({
+      ...d,
+      actual: d.actual ?? 0,
+      predicted: d.predicted == null ? null : d.predicted,
+    }));
+}
+
+// ---------- Tooltips ----------
+const HourlyTooltip = ({ active, payload }: any) => {
+  if (!active || !payload?.length) return null;
+  const p = payload[0]?.payload;
+  if (!p) return null;
+  return (
+    <div className="bg-white/95 p-2 rounded shadow text-sm">
+      <div className="font-medium">
+        {format(parseISO(p.date), 'PPP')} — {String(p.hour).padStart(2, '0')}:00
+      </div>
+      <div>Actual: {p.actual ?? '—'}</div>
+      <div>Predicted: {p.predicted ?? '—'}</div>
+    </div>
+  );
+};
+
+const DailyTooltip = ({ active, payload }: any) => {
+  if (!active || !payload?.length) return null;
+  const p = payload[0]?.payload;
+  if (!p) return null;
+  return (
+    <div className="bg-white/95 p-2 rounded shadow text-sm">
+      <div className="font-medium">{format(parseISO(p.date), 'PPP')} ({p.weekday})</div>
+      <div>Actual: {p.actual ?? '—'}</div>
+      <div>Predicted: {p.predicted ?? '—'}</div>
+    </div>
+  );
+};
+
+// ---------- Helpers for Peak Highlighting ----------
+function computeDailyAverages(combinedDaily: ReturnType<typeof buildCombinedDaily>) {
+  // returns map date -> avgHourly
+  const map = new Map<string, number>();
+  combinedDaily.forEach((d) => {
+    // assume daily total is 'actual' and we divide by 24
+    const avg = (d.actual ?? 0) / 24;
+    map.set(d.date, avg);
+  });
+  return map;
+}
+
+// Custom dot for line: big colored dot for peak hour / peak point
+
+// ---------- Main Component ----------
+export const DataVisualization: React.FC<Props> = ({
   hourlyData,
   dailyData,
+  hourlyPredictions = [],
+  dailyPredictions = [],
   loading,
   dateRange,
-}: DataVisualizationProps) {
-  // --- Loading State ---
-  if (loading) {
-    return (
-      <Card className="animate-pulse">
-        <CardHeader>
-          <div className="h-6 bg-gray-200 rounded w-48"></div>
-          <div className="h-4 bg-gray-200 rounded w-64"></div>
-        </CardHeader>
-        <CardContent>
-          <div className="h-96 bg-gray-200 rounded"></div>
-        </CardContent>
-      </Card>
-    );
-  }
+  streetTotals,
+  comparisonSeries = [],
+}) => {
+  const [view, setView] = useState<'hourly' | 'daily' | 'comparison' | 'overview'>('hourly');
 
-  // --- No Data State ---
-  if (hourlyData.length === 0 && dailyData.length === 0) {
-    return (
-      <Card>
-        <CardContent className="pt-6">
-          <div className="text-center text-gray-500">
-            <TrendingUp className="mx-auto h-12 w-12 mb-4 opacity-50" />
-            <p>No data available for visualization</p>
-            <p className="text-sm mt-2">Try adjusting your filters or date range</p>
-          </div>
-        </CardContent>
-      </Card>
-    );
-  }
+  const combinedHourly = useMemo(() => buildCombinedHourly(hourlyData ?? [], hourlyPredictions ?? []), [hourlyData, hourlyPredictions]);
+  const combinedDaily = useMemo(() => buildCombinedDaily(dailyData ?? [], dailyPredictions ?? []), [dailyData, dailyPredictions]);
 
-  // --- 1️⃣ Compute Daily Peaks using util ---
-  const dailyWithPeaks = calculateDailyPeak(hourlyData, dailyData, dateRange.type);
+  const dailyAverages = useMemo(() => computeDailyAverages(combinedDaily), [combinedDaily]);
 
-  type HourlyPeakChartPoint = {
-    hour: number;
-    total: number;
-    peakCount: number;
-    isPeak: boolean;
-    date?: string;
-  };
+  const peakThreshold = useMemo(() => {
+    if (!combinedHourly || combinedHourly.length === 0) return 0;
+    const values = combinedHourly.map(d => d.actual);
+    values.sort((a, b) => a - b);
+    const index = Math.floor(values.length * 0.8);
+    return values[index];
+  }, [combinedHourly]);
 
-  let peakChartDataForMultiDay = dailyWithPeaks; // unchanged
+  const peakLineData = useMemo(() => {
+    return combinedHourly.map(d => ({
+      ...d,
+      peak: d.actual >= peakThreshold ? d.actual : null, 
+    }));
+  }, [combinedHourly, peakThreshold]);
 
-  let peakChartDataForSingleDay: HourlyPeakChartPoint[] | null = null;
-
-  if (dateRange.type === 'day' && dailyWithPeaks.length > 0) {
-    // Filter to the single day
-    const dayRow = dailyWithPeaks[0]; // should be just one day
-    const peakHour = dayRow?.peakHour ?? null;
-    const peakCount = dayRow?.peakCount ?? 0;
-    const theDate = dayRow?.date;
-
-    // Build a lookup by hour if hourly info exists, else fallback
-    const hourlyLike = dailyWithPeaks as DailyWithHour[];
-    const hourlyByIndex = hourlyLike.reduce<Record<number, DailyWithHour>>((acc, row, idx) => {
-      const hourKey = typeof row.hour === 'number' ? row.hour : idx;
-      acc[hourKey] = row;
-      return acc;
-    }, {});
-
-    // Build 0..23 hour points
-    peakChartDataForSingleDay = Array.from({ length: 24 }, (_, hour) => {
-      const row = hourlyByIndex[hour];
-      return {
-        hour,
-        total: row?.total ?? 0,
-        peakCount: hour === peakHour ? peakCount : 0,
-        isPeak: hour === peakHour,
-        date: theDate,
-      };
+  // find global peak points for current view (used to mark largest point)
+  const globalHourlyPeak = useMemo(() => {
+    if (!combinedHourly?.length) return null;
+    let best = combinedHourly[0];
+    combinedHourly.forEach((d) => {
+      if ((d.actual ?? 0) > (best.actual ?? 0)) best = d;
     });
-  }
+    return best;
+  }, [combinedHourly]);
 
-  // --- 2️⃣ Compute Quantile for highlighting high hours ---
-  const hourlyDataForSingleDay = hourlyData.map((d) => ({ ...d }));
-  let quantile70 = 0;
-  if (dateRange.type === 'day' && hourlyData.length > 0) {
-    const totals = hourlyData.map((d) => d.total);
-    quantile70 = calculateQuantile(totals, 0.7);
-    hourlyDataForSingleDay.forEach((d) => (d.isHigh = d.total >= quantile70));
-  }
-  const highLineData = hourlyDataForSingleDay.map((d) => ({
-    ...d,
-    total: d.isHigh ? d.total : null,
-  }));
+  if (loading) return <div className="h-96 flex items-center justify-center">Loading...</div>;
+
+  // Colors for overlay series
+  const overlayColors = ['#f97316', '#06b6d4', '#10b981', '#8b5cf6'];
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center space-x-2">
-          <TrendingUp className="h-5 w-5" />
-          <span>Pedestrian Flow Analysis</span>
-        </CardTitle>
-        <div className="flex items-center space-x-4">
-          <Badge variant="outline">
-            {dateRange.type === 'day' && 'Daily View'}
-            {dateRange.type === 'week' && 'Weekly View'}
-            {dateRange.type === 'month' && 'Monthly View'}
-          </Badge>
-          <span className="text-sm text-gray-600 dark:text-gray-400">
-            {hourlyData.length + dailyData.length} data points
-          </span>
+    <div className="w-full space-y-4">
+      {/* Toggle Buttons */}
+      <div className="flex items-center justify-between">
+        <h3 className="text-lg font-semibold">Pedestrian Flow</h3>
+        <div className="flex space-x-2">
+          <Button onClick={() => setView('hourly')}>Hourly</Button>
+          <Button onClick={() => setView('daily')}>Daily</Button>
+          <Button onClick={() => setView('comparison')}>Comparison</Button>
+          <Button onClick={() => setView('overview')}>Overview</Button>
         </div>
-      </CardHeader>
+      </div>
 
-      <CardContent>
-        <Tabs defaultValue="hourly" className="w-full">
-          <TabsList className="grid w-full grid-cols-2">
-            <TabsTrigger value="hourly" className="flex items-center space-x-2">
-              <Clock className="h-4 w-4" />
-              <span>Hourly Pattern</span>
-            </TabsTrigger>
-            <TabsTrigger value="special" className="flex items-center space-x-2">
-              <Calendar className="h-4 w-4" />
-              <span>Peak Days</span>
-            </TabsTrigger>
-          </TabsList>
-
-          {/* Hourly Pattern */}
-          <TabsContent value="hourly" className="space-y-4">
-            <div className="h-96">
+      <div className="h-96">
+        <AnimatePresence mode="wait">
+          {view === 'hourly' ? (
+            <motion.div
+              key="hourly"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              transition={{ duration: 0.3 }}
+              className="h-full"
+            >
               <ResponsiveContainer width="100%" height="100%">
-                {dateRange.type === 'day' ? (
-                  <LineChart data={hourlyDataForSingleDay}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="hour" tickFormatter={(v) => `${v}:00`} />
-                    <YAxis />
-                    <Tooltip
-                      formatter={(value: number) => [value.toLocaleString(), 'Pedestrians']}
-                      labelFormatter={(label) =>
-                        typeof label === 'number' ? `${label}:00` : String(label)
-                      }
-                    />
-                    <Legend />
-                    <Line type="monotone" dataKey="total" stroke="#8884d8" strokeWidth={2} dot={false} />
-                    <Line
-                      type="monotone"
-                      data={highLineData}
-                      dataKey="total"
-                      stroke="#FF4C4C"
-                      strokeWidth={2}
-                      dot={false}
-                      name="High Traffic Hours"
-                    />
-                  </LineChart>
-                ) : (
-                  <AreaChart data={hourlyData}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="hour" tickFormatter={(v) => `${v}:00`} />
-                    <YAxis />
-                    <Tooltip
-                      formatter={(value: number, name: string) => [
-                        value.toLocaleString(),
-                        name === 'total'
-                          ? 'Total'
-                          : name === 'towards'
-                          ? 'Towards City'
-                          : 'Away from City',
-                      ]}
-                    />
-                    <Legend />
-                    <Area
-                      type="monotone"
-                      dataKey="towards"
-                      stackId="1"
-                      stroke="#8884d8"
-                      fill="#8884d8"
-                      name="Towards City"
-                    />
-                    <Area
-                      type="monotone"
-                      dataKey="away"
-                      stackId="1"
-                      stroke="#82ca9d"
-                      fill="#82ca9d"
-                      name="Away from City"
-                    />
-                  </AreaChart>
-                )}
-              </ResponsiveContainer>
-            </div>
-          </TabsContent>
-
-          {/* Peak Days */}
-          <TabsContent value="special" className="space-y-4">
-            <div className="h-96">
-              <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart
-                  data={dateRange.type === 'day' ? peakChartDataForSingleDay ?? [] : peakChartDataForMultiDay}
-                >
+                <LineChart data={combinedHourly}>
                   <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis
-                    dataKey={dateRange.type === 'day' ? 'hour' : 'date'}
-                    tickFormatter={(value) =>
-                      dateRange.type === 'day'
-                        ? `${value}:00`
-                        : (() => {
-                            const d = new Date(String(value));
-                            return isNaN(d.getTime()) ? String(value) : format(d, 'MMM dd');
-                          })()
-                    }
-                  />
+                  <XAxis dataKey="hour" tickFormatter={(h) => `${String(h).padStart(2, '0')}:00`} />
                   <YAxis />
-                  <Tooltip
-                    formatter={(value: number, name: string, entry: any) => {
-                      if (name === 'peakCount') {
-                        const hourLabel =
-                          dateRange.type === 'day'
-                            ? `${entry?.payload?.hour ?? ''}:00`
-                            : `Peak Hour: ${entry?.payload?.peakHour ?? ''}:00`;
-                        return [value.toLocaleString(), hourLabel];
-                      }
-                      return [value.toLocaleString(), name];
-                    }}
-                  />
+                  <Tooltip content={HourlyTooltip} />
                   <Legend />
-                  <Bar
-                    dataKey="peakCount"
-                    barSize={dateRange.type === 'day' ? 18 : 24}
-                    fill="rgba(255, 76, 76, 0.5)"
-                    name="Peak Hour Count"
-                    radius={[4, 4, 0, 0]}
-                  >
-                    <LabelList
-                      dataKey="peakCount"
-                      content={(props) => {
-                        const { x, y, width, value } = props;
-                        if (!value || value === 0) return null;
-                        const textX = x! + width! / 2;
-                        const textY = y! - 6;
-                        return (
-                          <text
-                            x={textX}
-                            y={textY}
-                            fill="#FF0000"
-                            fontSize={12}
-                            textAnchor="middle"
-                          >
-                            {value}
-                          </text>
-                        );
-                      }}
-                    />
-                  </Bar>
+
+                  {/* Actual line with custom dots marking peaks */}
+                  <Line
+                    type="monotone"
+                    dataKey="actual"
+                    name="Actual"
+                    stroke="#2563eb"
+                    strokeWidth={2}
+                    dot={false} // normale Punkte entfernen
+                  />
+
+                  {/* Predicted line: only show where predicted isn't null */}
+                  {/* Predicted Line */}
+                  <Line
+                    type="monotone"
+                    dataKey="predicted"
+                    name="Predicted"
+                    stroke="#f59e0b"
+                    strokeDasharray="5 5"
+                    strokeWidth={2}
+                    dot={false}
+                  />
 
                   <Line
                     type="monotone"
-                    dataKey="total"
-                    stroke="#3366cc"
-                    strokeWidth={2}
-                    name="Total Pedestrians"
+                    data={peakLineData}
+                    dataKey="peak"
+                    stroke="#ef4444"
+                    strokeWidth={4}
+                    dot={false}
+                    isAnimationActive={false}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </motion.div>
+          ) : view === 'daily' ? (
+            <motion.div
+              key="daily"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              transition={{ duration: 0.3 }}
+              className="h-full"
+            >
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart data={combinedDaily}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="date" tickFormatter={(d) => format(parseISO(d), 'MMM dd')} />
+                  <YAxis />
+                  <Tooltip content={DailyTooltip} />
+                  <Legend />
+
+                  {/* Main actual bar */}
+                  <Bar dataKey="actual" name="Actual" barSize={24} fill="#2563eb" />
+
+                  {/* Predicted overlay as line for clarity */}
+                  <Line
+                    type="monotone"
+                    dataKey="predicted"
+                    name="Predicted"
+                    stroke="#f59e0b"
+                    strokeDasharray="5 5"
+                    strokeWidth={3}
                     dot={{ r: 3 }}
                   />
+
+                  {/* optional comparison series — provided by dashboard if available */}
+                  {comparisonSeries?.map((s, idx) => (
+                    <Bar key={s.key} dataKey={s.key} name={s.name} barSize={18} fill={s.color ?? overlayColors[idx % overlayColors.length]} opacity={s.opacity ?? 0.35} />
+                  ))}
                 </ComposedChart>
               </ResponsiveContainer>
-            </div>
-          </TabsContent>
-        </Tabs>
-      </CardContent>
-    </Card>
+            </motion.div>
+          ) : view === 'comparison' ? (
+            <motion.div
+              key="comparison"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              transition={{ duration: 0.3 }}
+              className="h-full"
+            >
+              {/* Comparison view: if comparisonSeries provided, show them overlaid. Else show a message */}
+              {comparisonSeries && comparisonSeries.length > 0 ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <ComposedChart data={combinedDaily}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="date" tickFormatter={(d) => format(parseISO(d), 'MMM dd')} />
+                    <YAxis />
+                    <Tooltip />
+                    <Legend />
+
+                    <Bar dataKey="actual" name="Selected" barSize={22} fill="#2563eb" />
+
+                    {comparisonSeries.map((s, idx) => (
+                      <Bar key={s.key} dataKey={s.key} name={s.name} barSize={14} fill={s.color ?? overlayColors[idx % overlayColors.length]} opacity={s.opacity ?? 0.35} />
+                    ))}
+                  </ComposedChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="h-full flex items-center justify-center text-sm text-gray-500">Keine Vergleichsreihen verfügbar. Übergib `comparisonSeries` an die Komponente (z. B. previousDay, sameDayLastWeek, lastYear).</div>
+              )}
+            </motion.div>
+          ) : (
+            <motion.div
+              key="overview"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              transition={{ duration: 0.3 }}
+              className="h-full"
+            >
+              {/* Overview: either pie chart for all streets, or stacked small multiples */}
+              {streetTotals && streetTotals.length > 0 && (
+                <ResponsiveContainer width="100%" height={350}>
+                  <PieChart>
+                    <Pie
+                      data={streetTotals}
+                      dataKey="total"
+                      nameKey="street"
+                      outerRadius={120}
+                      label={(entry) => `${entry.street}`}
+                    >
+                      {streetTotals.map((entry, index) => (
+                        <Cell
+                          key={`cell-${index}`}
+                          fill={`hsl(${(index * 40) % 360}, 70%, 60%)`}
+                        />
+                      ))}
+                    </Pie>
+                    <Tooltip />
+                  </PieChart>
+                </ResponsiveContainer>           
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+    </div>
   );
-}
+};

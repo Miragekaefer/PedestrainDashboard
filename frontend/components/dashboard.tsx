@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { TrendingUp, MapPin } from 'lucide-react';
-import { DashboardFilters, StatisticsData, HourlyDataPoint, DailyDataPoint, CalendarEvent } from '@/lib/types';
+import { DashboardFilters, StatisticsData, HourlyDataPoint, DailyDataPoint, CalendarEvent, PredictionRecord, StreetTotal, ComparisonSeries } from '@/lib/types';
 import { pedestrianAPI } from '@/lib/api';
 import { StreetFilter } from './filters/street-filter';
 import { DateFilter } from './filters/date-filter';
@@ -33,6 +33,11 @@ export function Dashboard() {
   const [streets, setStreets] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [futureEvents, setFutureEvents] = useState<CalendarEvent[]>([]);
+  const [hourlyPredictions, setHourlyPredictions] = useState<HourlyDataPoint[]>([]);
+  const [dailyPredictions, setDailyPredictions] = useState<DailyDataPoint[]>([]);
+  const [comparisonSeries, setComparisonSeries] = useState<ComparisonSeries[]>([]);
+  const [streetTotals, setStreetTotals] = useState<StreetTotal[]>([]);
+
 
   // Load streets on mount
   useEffect(() => {
@@ -100,92 +105,131 @@ export function Dashboard() {
     loadFutureEvents();
   }, []);
 
+useEffect(() => {
+  if (!dailyData || dailyData.length === 0) return;
+
+  const shiftDates = (data: DailyDataPoint[], days: number): DailyDataPoint[] =>
+    data.map(d => ({
+      ...d,
+      date: new Date(
+        new Date(d.date).getTime() + days * 86400000
+      ).toISOString().split("T")[0],
+    }));
+
+  setComparisonSeries([
+    {
+      key: "prevDay",
+      name: "Vorheriger Tag",
+      data: shiftDates(dailyData, -1),
+      color: "#06b6d4",
+      opacity: 0.35,
+    },
+    {
+      key: "lastWeek",
+      name: "Letzte Woche",
+      data: shiftDates(dailyData, -7),
+      color: "#f59e0b",
+      opacity: 0.35,
+    },
+  ]);
+}, [dailyData]);
+
+
   // Load data when filters change
-  useEffect(() => {
-const loadData = async () => {
-  if (!filters.street) return;
+useEffect(() => {
+  const loadData = async () => {
+    if (!filters.street) return;
+    if (filters.street === 'All_streets' && streets.length === 0) return; // ✅ wait for street list
 
-  setLoading(true);
-  setError(null);
+    setLoading(true);
+    setError(null);
 
-  try {
-    const { start, end } = filters.dateRange;
-    const startDate = start.toISOString().split('T')[0];
-    const endDate = end.toISOString().split('T')[0];
+    try {
+      const { start, end } = filters.dateRange;
+      const startDate = start.toISOString().split('T')[0];
+      const endDate = end.toISOString().split('T')[0];
 
-    let combinedData: any[] = [];
-    let combinedStats: StatisticsData = {
-      totalPedestrians: 0,
-      avgHourlyCount: 0,
-      peakHour: 0,
-      peakCount: 0,
-      directionRatio: 0,
-      weatherImpact: 'low'
-    };
+      let combinedData: any[] = [];
+      let combinedStats: StatisticsData = {
+        totalPedestrians: 0,
+        avgHourlyCount: 0,
+        peakHour: 0,
+        peakCount: 0,
+        directionRatio: 0,
+        weatherImpact: 'low',
+      };
 
-    if (filters.street === 'All_streets') {
-      // Fetch all streets in parallel
-      const promises = streets.map(async (street) => {
-        const [hist, stats] = await Promise.all([
-          pedestrianAPI.getHistoricalData(street, startDate, endDate),
-          pedestrianAPI.getStatistics(street, startDate, endDate)
+      // ✅ Declare once, always in scope
+      let predictionData: any[] = [];
+
+      if (filters.street === 'All_streets') {
+        const promises = streets.map(async (street) => {
+          try {
+            const [hist, stats] = await Promise.all([
+              pedestrianAPI.getHistoricalData(street, startDate, endDate),
+              pedestrianAPI.getStatistics(street, startDate, endDate),
+            ]);
+            return { hist, stats };
+          } catch {
+            return { hist: null, stats: null };
+          }
+        });
+
+        const results = await Promise.all(promises);
+
+        results.forEach(({ hist, stats }) => {
+          if (hist?.data && Array.isArray(hist.data)) {
+            combinedData.push(...hist.data);
+          }
+          if (stats) {
+            combinedStats.totalPedestrians += stats.totalPedestrians ?? 0;
+            combinedStats.avgHourlyCount += stats.avgHourlyCount ?? 0;
+            combinedStats.peakCount = Math.max(combinedStats.peakCount, stats.peakCount ?? 0);
+            combinedStats.directionRatio += stats.directionRatio ?? 0;
+          }
+        });
+
+        if (results.length > 0) {
+          combinedStats.avgHourlyCount = Math.round(combinedStats.avgHourlyCount / results.length);
+          combinedStats.directionRatio = Math.round(combinedStats.directionRatio / results.length);
+        }
+      } else {
+        // ✅ Single street case
+        const [histResp, statsResp, predResp] = await Promise.all([
+          pedestrianAPI.getHistoricalData(filters.street, startDate, endDate),
+          pedestrianAPI.getStatistics(filters.street, startDate, endDate),
+          pedestrianAPI.getPredictionData(filters.street, startDate, endDate),
         ]);
 
-        return { hist, stats };
-      });
-
-      const results = await Promise.all(promises);
-
-      // Combine all historical data
-      results.forEach(({ hist, stats }) => {
-        if (hist && Array.isArray(hist.data)) {
-          combinedData.push(...hist.data);
-        }
-
-        // Combine statistics (averaging where appropriate)
-        combinedStats.totalPedestrians += stats.totalPedestrians;
-        combinedStats.avgHourlyCount += stats.avgHourlyCount;
-        combinedStats.peakCount = Math.max(combinedStats.peakCount, stats.peakCount);
-        combinedStats.directionRatio += stats.directionRatio;
-      });
-
-      // Average out some metrics
-      if (results.length > 0) {
-        combinedStats.avgHourlyCount = Math.round(combinedStats.avgHourlyCount / results.length);
-        combinedStats.directionRatio = Math.round(combinedStats.directionRatio / results.length);
+        combinedData = histResp?.data ?? [];
+        combinedStats = statsResp ?? combinedStats;
+        predictionData = predResp?.predictions ?? [];
       }
-    } else {
-      // Single street
-      const [histResp, statsResp] = await Promise.all([
-        pedestrianAPI.getHistoricalData(filters.street, startDate, endDate),
-        pedestrianAPI.getStatistics(filters.street, startDate, endDate)
-      ]);
 
-      combinedData = histResp.data;
-      combinedStats = statsResp;
+      // ✅ Always defined safely
+// Transform data
+      const hourlyChartData = pedestrianAPI.transformToHourlyData(combinedData ?? []);
+      const dailyChartData = pedestrianAPI.transformToDailyData(combinedData ?? []);
+      const hourlyPredictionData = pedestrianAPI.transformToHourlyData(predictionData ?? []);
+      const dailyPredictionData = pedestrianAPI.transformToDailyData(predictionData ?? []);
+
+      // Set data
+      setHourlyData(hourlyChartData);
+      setDailyData(fillDailyData(dailyChartData, filters.dateRange.start, filters.dateRange.end));
+      setHourlyPredictions(hourlyPredictionData);
+      setDailyPredictions(dailyPredictionData);
+      setStatistics(combinedStats);
+      await loadCalendarEvents();
+    } catch (err) {
+      console.error('Failed to load data:', err);
+      setError('Failed to load pedestrian data');
+    } finally {
+      setLoading(false);
     }
+  };
 
-    // Transform for charts
-    const hourlyChartData = pedestrianAPI.transformToHourlyData(combinedData);
-    const dailyChartData = pedestrianAPI.transformToDailyData(combinedData);
-
-    // Update state
-    setStatistics(combinedStats);
-    setHourlyData(hourlyChartData);
-    setDailyData(fillDailyData(dailyChartData, filters.dateRange.start, filters.dateRange.end));
-
-    await loadCalendarEvents();
-  } catch (err) {
-    console.error('Failed to load data:', err);
-    setError('Failed to load pedestrian data');
-  } finally {
-    setLoading(false);
-  }
-};
-
-
-    loadData();
-  }, [filters, streets]);
+  loadData();
+}, [filters, streets]);
 
   // Calendar events loader
   const loadCalendarEvents = async () => {
@@ -376,8 +420,12 @@ const loadData = async () => {
                   <DataVisualization
                     hourlyData={hourlyData}
                     dailyData={dailyData}
+                    hourlyPredictions={hourlyPredictions}
+                    dailyPredictions={dailyPredictions}
                     loading={loading}
                     dateRange={filters.dateRange}
+                    comparisonSeries={comparisonSeries}
+                    streetTotals={streetTotals}
                   />
                 </div>
 
