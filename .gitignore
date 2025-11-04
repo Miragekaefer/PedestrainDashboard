@@ -128,9 +128,7 @@ Desktop.ini
 
 # ML / Data Science
 *.h5
-*.pkl
 *.joblib
-models/
 checkpoints/
 
 # Vercel

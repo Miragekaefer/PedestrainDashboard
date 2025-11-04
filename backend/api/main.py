@@ -92,6 +92,42 @@ class PedestrianData(BaseModel):
             }
         }
 
+class PredictionData(BaseModel):
+    id: str = Field(..., description="Eindeutige ID im Format: Straße_YYYY-MM-DD_HH")
+    street: str = Field(..., description="Straßenname")
+    city: str = Field(..., description="Stadt (Wuerzburg)")
+    date: str = Field(..., description="Datum im Format YYYY-MM-DD")
+    hour: str = Field(..., description="Stunde (0-23)")
+    weekday: str = Field(..., description="Wochentag (z.B. Monday, Tuesday)")
+    n_pedestrians: float = Field(..., description="Vorhergesagte Anzahl Passanten")
+    temperature: Optional[float] = Field(None, description="Vorhergesagte Temperatur in °C")
+    weather_condition: Optional[str] = Field(None, description="Vorhergesagte Wetterbedingung")
+    incidents: str = Field(default="no_incident", description="Erwartete Vorfälle")
+    collection_type: str = Field(default="measured", description="Erfassungstyp (measured/estimated)")
+    data_type: str = Field(default="prediction", description="Datenklassifizierung")
+    generated_at: Optional[str] = Field(None, description="Zeitpunkt der Vorhersagegenerierung")
+    timestamp: Optional[str] = Field(None, description="ISO 8601 Zeitstempel")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "id": "Kaiserstraße_2025-10-27_14",
+                "street": "Kaiserstraße",
+                "city": "Wuerzburg",
+                "date": "2025-10-28",
+                "hour": "14",
+                "weekday": "Tuesday",
+                "n_pedestrians": 1542.35,
+                "temperature": 12.5,
+                "weather_condition": "partly-cloudy-day",
+                "incidents": "no_incident",
+                "collection_type": "measured",
+                "data_type": "prediction",
+                "prediction_generated_at": "2025-10-27T10:00:00+01:00",
+                "timestamp": "2025-10-27T14:00:00+02:00"
+            }
+        }
+
 # ============================================
 # ENDPOINTS
 # ============================================
@@ -113,9 +149,27 @@ async def root():
             "statistics": "/api/statistics/{street}",
             "calendar": "/api/calendar/{date}",
             "events": "/api/events/{date}",
+            "all_events": "/api/events/all_dates",
             "locations": "/api/locations"
         }
     }
+
+@app.get(
+    "/api/pedestrians/all",
+    summary="Alle historischen Passantendaten abrufen",
+    description="Ruft alle verfügbaren historischen Passantenzählungen für eine Straße ab (für Modelltraining).",
+    tags=["Pedestrian Data"]
+)
+async def get_all_historical_data(street: str):
+    if street not in ["Kaiserstraße", "Spiegelstraße", "Schönbornstraße"]:
+        raise HTTPException(status_code=400, detail="Ungültiger Straßenname")
+    
+    try:
+        # fetch everything at once using a very wide date range
+        data = redis_client.get_historical_range(street, "1900-01-01", "2100-12-31")
+        return {"street": street, "count": len(data), "data": data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get(
     "/api/streets",
@@ -339,6 +393,39 @@ async def get_calendar_info(
         raise HTTPException(status_code=400, detail="Ungültiges Datumsformat. Nutze YYYY-MM-DD")
 
 @app.get(
+    "/api/all_event_dates",
+    summary="Alle Events",
+    description="""
+    Gibt alle Events mit stündlicher Auflösung zurück.
+    
+    **Format:**
+    - `date`: Datum im Format YYYY-MM-DD
+    - `hour`: Stunde (0-23)
+    - `datetime`: Datum im Format YYYY-MM-DD HH-MM-SS
+    - `event`: Boolean ob Event vorhanden
+    - `concert`: Boolean ob Konzert vorhanden
+    
+    **Beispiel:**
+    GET /api/events/all_dates
+    """,
+    tags=["Calendar Features"]
+)
+async def get_all_events():
+    try:
+        events = redis_client.get_all_events()
+
+        print(events)
+        
+        return {
+            "count": len(events),
+            "events": events
+        }
+    
+    except Exception as e:
+        logger.error(f"Error fetching all events: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get(
     "/api/events/{date}",
     summary="Events für ein Datum",
     description="""
@@ -379,6 +466,94 @@ async def get_events_for_date(
         raise HTTPException(status_code=400, detail="Ungültiges Datumsformat")
 
 @app.get(
+    "/api/pedestrians/latest/{street}",
+    summary="Letzte aufgezeichnete Stunde für eine Straße",
+    description="""
+    Gibt das Datum und die Stunde des zuletzt aufgezeichneten Datensatzes für eine Straße zurück.
+
+    Beispiel:
+    GET /api/pedestrians/latest/Kaiserstraße
+    """,
+    tags=["Pedestrian Data"]
+)
+async def get_latest_pedestrian_record(
+    street: str = Path(..., description="Straßenname", example="Kaiserstraße")
+):
+    if street not in ["Kaiserstraße", "Spiegelstraße", "Schönbornstraße"]:
+        raise HTTPException(status_code=400, detail="Ungültiger Straßenname")
+
+    try:
+        # Hole ALLE Daten aus Redis (kann später optimiert werden)
+        all_data = redis_client.get_historical_range(street, "1900-01-01", "2100-12-31")
+
+        if not all_data:
+            raise HTTPException(status_code=404, detail=f"Keine Daten für {street} gefunden")
+
+        # Wähle den Datensatz mit dem neuesten Timestamp
+        latest = max(all_data, key=lambda x: x.get("timestamp") or "")
+
+        return {
+            "street": street,
+            "latest_record": {
+                "date": latest.get("date"),
+                "hour": int(latest.get("hour", 0)),
+                "timestamp": latest.get("timestamp")
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Fehler beim Abrufen des letzten Datensatzes für {street}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get(
+    "/api/holiday/all",
+    summary="Alle Feiertage abrufen",
+    description="Gibt alle Feiertage zurück (für Modelltraining)",
+    tags=["Calendar Features"]
+)
+async def get_all_holidays():
+    try:
+        holidays = redis_client.get_all_public_holidays()  # implement in Redis client
+        results = []
+
+        for h in holidays:
+            results.append({
+                "date": h.get("date"),
+                "is_holiday": int(h.get("is_holiday", False)),
+                "is_nationwide": int(h.get("is_nationwide", False))
+            })
+
+        return {"count": len(results), "data": results}
+    except Exception as e:
+        logger.error(f"Error fetching all holidays: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    
+@app.get(
+    "/api/lecture/all",
+    summary="Alle Vorlesungsperioden abrufen",
+    description="Gibt alle Vorlesungsperioden zurück (für Modelltraining)",
+    tags=["Calendar Features"]
+)
+async def get_all_lectures():
+    try:
+        all_dates = redis_client.get_all_lecture_dates()  # implement in Redis client
+        results = []
+
+        for date_str in all_dates:
+            info = redis_client.get_lecture_info(date_str)
+            if not info:
+                continue
+            results.append({
+                "date": date_str,
+                "is_lecture_period": int(info.get("jmu_lecture", False))
+            })
+
+        return {"count": len(results), "data": results}
+    except Exception as e:
+        logger.error(f"Error fetching all lectures: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get(
     "/api/school-holidays",
     summary="Alle Schulferien-Perioden",
     description="""
@@ -398,6 +573,22 @@ async def get_all_school_holiday_periods():
         "count": len(periods),
         "periods": periods
     }
+
+@app.get(
+    "/api/school-holiday/all",
+    summary="Alle Schulferien abrufen",
+    description="Gibt alle Schulferien zurück (für Modelltraining)",
+    tags=["Calendar Features"]
+)
+async def get_all_school_holidays():
+    try:
+        school_holidays = redis_client.get_all_school_holiday_dates()  # implement in Redis client
+        results = [{"date": d, "is_school_holiday": 1} for d in school_holidays]
+
+        return {"count": len(results), "data": results}
+    except Exception as e:
+        logger.error(f"Error fetching all school holidays: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get(
     "/api/locations",
@@ -444,33 +635,220 @@ async def get_location_info(
     return location
 
 @app.get(
-    "/api/predictions",
-    summary="Vorhersagen (Coming Soon)",
+    "/api/pedestrians/predictions",
+    summary="Vorhersagen für Passantenströme",
     description="""
     Gibt ML-basierte Vorhersagen für Passantenströme zurück.
     
-    **Status:** In Entwicklung
+    **Parameter:**
+    - `street`: (Optional) Name der Straße. Wenn nicht angegeben, werden alle Straßen zurückgegeben.
+    - `start_date`: (Optional) Startdatum im Format YYYY-MM-DD. Standard: jetzt
+    - `end_date`: (Optional) Enddatum im Format YYYY-MM-DD. Standard: start_date + 7 Tage
+    - `hours`: (Optional) Anzahl Stunden in die Zukunft (1-192). Überschreibt end_date wenn angegeben.
+    - `limit`: (Optional) Maximale Anzahl Ergebnisse
     
-    Geplante Parameter:
-    - `street`: Straßenname
-    - `hours`: Anzahl Stunden in die Zukunft (1-168)
+    **Hinweis:** Vorhersagen werden stündlich aktualisiert und decken bis zu 8 Tage in die Zukunft ab.
+    Nicht alle Stunden haben zwingend Vorhersagen verfügbar.
+    
+    **Beispiele:**
+    - Nächste 24 Stunden für Kaiserstraße: `?street=Kaiserstraße&hours=24`
+    - Spezifischer Zeitraum: `?street=Spiegelstraße&start_date=2025-10-28&end_date=2025-10-30`
+    - Alle Straßen, nächste 48h: `?hours=48`
+    """,
+    tags=["Predictions"],
+    response_model=dict
+)
+async def get_predictions(
+    street: Optional[str] = Query(None, description="Straßenname (optional)", example="Kaiserstraße"),
+    start_date: Optional[str] = Query(None, description="Startdatum (YYYY-MM-DD)", example="2025-10-28"),
+    end_date: Optional[str] = Query(None, description="Enddatum (YYYY-MM-DD)", example="2025-10-30"),
+    hours: Optional[int] = Query(None, description="Stunden voraus (überschreibt end_date)", ge=1, le=192),
+    limit: Optional[int] = Query(None, description="Max. Anzahl Ergebnisse", ge=1, le=10000)
+):
+    try:
+        # Validate street if provided
+        valid_streets = ["Kaiserstraße", "Spiegelstraße", "Schönbornstraße"]
+        if street and street not in valid_streets:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Ungültiger Straßenname. Verfügbar: {', '.join(valid_streets)}"
+            )
+        
+        # Determine date range
+        now = datetime.now()
+        
+        if hours:
+            # Use hours parameter (overrides dates)
+            start_dt = now
+            end_dt = now + timedelta(hours=hours)
+            start_date_str = start_dt.strftime('%Y-%m-%d')
+            end_date_str = end_dt.strftime('%Y-%m-%d')
+        else:
+            # Use date parameters or defaults
+            if start_date:
+                start_dt = datetime.strptime(start_date, '%Y-%m-%d')
+                start_date_str = start_date
+            else:
+                start_dt = now
+                start_date_str = now.strftime('%Y-%m-%d')
+            
+            if end_date:
+                end_dt = datetime.strptime(end_date, '%Y-%m-%d')
+                end_date_str = end_date
+            else:
+                end_dt = start_dt + timedelta(days=7)
+                end_date_str = end_dt.strftime('%Y-%m-%d')
+        
+        # Get predictions from Redis
+        streets_to_query = [street] if street else valid_streets
+        all_predictions = []
+        
+        for street_name in streets_to_query:
+            predictions = redis_client.get_prediction_range(
+                street_name, 
+                start_date_str, 
+                end_date_str
+            )
+            all_predictions.extend(predictions)
+        
+        # If hours parameter was used, filter to exact hour range
+        if hours:
+            end_timestamp = end_dt.isoformat()
+            all_predictions = [
+                p for p in all_predictions 
+                if p.get('timestamp', '') <= end_timestamp
+            ]
+        
+        # Sort by timestamp
+        all_predictions.sort(key=lambda x: x.get('timestamp', ''))
+        
+        # Apply limit if specified
+        if limit:
+            all_predictions = all_predictions[:limit]
+        
+        # Format response
+        formatted_predictions = []
+        for pred in all_predictions:
+            try:
+                formatted_predictions.append({
+                    "id": pred.get('id', ''),
+                    "street": pred.get('street', ''),
+                    "city": pred.get('city', 'Wuerzburg'),
+                    "date": pred.get('date', ''),
+                    "hour": pred.get('hour', ''),
+                    "weekday": pred.get('weekday', ''),
+                    "n_pedestrians": round(float(pred.get('n_pedestrians', 0)), 2),
+                    "temperature": round(float(pred.get('temperature', 0)), 2) if pred.get('temperature') else None,
+                    "weather_condition": pred.get('weather_condition'),
+                    "incidents": pred.get('incidents', 'no_incident'),
+                    "collection_type": pred.get('collection_type', 'predicted'),
+                    "data_type": pred.get('data_type', 'prediction'),
+                    "prediction_generated_at": pred.get('prediction_generated_at'),
+                    "timestamp": pred.get('timestamp')
+                })
+            except (ValueError, TypeError) as e:
+                logger.warning(f"Skipping malformed prediction: {e}")
+                continue
+        
+        # Calculate actual time range covered
+        actual_start = formatted_predictions[0]['timestamp'] if formatted_predictions else None
+        actual_end = formatted_predictions[-1]['timestamp'] if formatted_predictions else None
+        
+        return {
+            "street": street if street else "all",
+            "requested_period": {
+                "start": start_date_str,
+                "end": end_date_str
+            },
+            "actual_coverage": {
+                "start": actual_start,
+                "end": actual_end,
+                "hours_covered": len(formatted_predictions)
+            },
+            "count": len(formatted_predictions),
+            "predictions": formatted_predictions,
+            "metadata": {
+                "prediction_horizon_hours": int((end_dt - start_dt).total_seconds() / 3600) if hours else None,
+                "generated_at": formatted_predictions[0].get('prediction_generated_at') if formatted_predictions else None,
+                "note": "Predictions are updated hourly and cover up to 8 days into the future"
+            }
+        }
+    
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Ungültiges Datumsformat: {str(e)}")
+    except Exception as e:
+        logger.error(f"Error fetching predictions: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get(
+    "/api/pedestrians/predictions/{street}",
+    summary="Vorhersagen für eine spezifische Straße",
+    description="""
+    Gibt ML-Vorhersagen für eine bestimmte Straße zurück.
+    
+    **Beispiel:**
+    GET /api/pedestrians/predictions/Kaiserstraße?hours=48
     """,
     tags=["Predictions"]
 )
-async def get_predictions(
-    street: str = Query("Kaiserstraße", description="Straßenname"),
-    hours: int = Query(24, description="Stunden voraus", ge=1, le=168)
+async def get_predictions_for_street(
+    street: str = Path(..., description="Straßenname", example="Kaiserstraße"),
+    hours: int = Query(24, description="Stunden voraus", ge=1, le=192)
 ):
-    return {
-        "status": "coming_soon",
-        "message": "ML-Modell wird noch trainiert",
-        "planned_features": [
-            "Stündliche Vorhersagen",
-            "Konfidenzintervalle",
-            "Wetterberücksichtigung",
-            "Event-Einflüsse"
-        ]
-    }
+    if street not in ["Kaiserstraße", "Spiegelstraße", "Schönbornstraße"]:
+        raise HTTPException(
+            status_code=400, 
+            detail="Ungültiger Straßenname. Verfügbar: Kaiserstraße, Spiegelstraße, Schönbornstraße"
+        )
+    
+    # Reuse the main predictions endpoint logic
+    return await get_predictions(street=street, hours=hours)
+
+
+@app.get(
+    "/api/predictions/status",
+    summary="Status der Vorhersagen",
+    description="""
+    Gibt Informationen über verfügbare Vorhersagen zurück.
+    
+    **Beinhaltet:**
+    - Anzahl verfügbarer Vorhersagen pro Straße
+    - Zeitstempel der letzten Vorhersagegenerierung
+    - Zeitliche Abdeckung
+    """,
+    tags=["Predictions"]
+)
+async def get_prediction_status():
+    """Get status information about available predictions."""
+    try:
+        streets = ["Kaiserstraße", "Spiegelstraße", "Schönbornstraße"]
+        status = {
+            "total_predictions": 0,
+            "streets": {},
+            "last_updated": None
+        }
+        
+        for street in streets:
+            count = redis_client.get_prediction_count(street)
+            latest_timestamp = redis_client.get_latest_prediction_timestamp(street)
+            
+            status["streets"][street] = {
+                "count": count,
+                "latest_timestamp": latest_timestamp
+            }
+            status["total_predictions"] += count
+            
+            # Track the most recent update across all streets
+            if latest_timestamp:
+                if not status["last_updated"] or latest_timestamp > status["last_updated"]:
+                    status["last_updated"] = latest_timestamp
+        
+        return status
+    
+    except Exception as e:
+        logger.error(f"Error fetching prediction status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     import uvicorn

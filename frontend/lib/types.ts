@@ -106,6 +106,8 @@ export interface DailyDataPoint {
   total: number;
   avgHourly: number;
   weekday: string;
+  avgTemperature?: number;
+  mainWeatherCondition?: string;
 }
 
 // Calendar event types
@@ -114,4 +116,58 @@ export interface CalendarEvent {
   type: 'holiday' | 'school_holiday' | 'event' | 'concert' | 'lecture';
   name?: string;
   description?: string;
+}
+
+export interface PredictionRecord {
+  id: string;
+  street: string;
+  city: string;
+  date: string;
+  hour: string;
+  weekday: string;
+  n_pedestrians: number;
+  temperature?: number;
+  weather_condition?: string;
+  incidents: string;
+  collection_type: string;
+  data_type: string;
+  prediction_generated_at?: string;
+  timestamp: string;
+}
+
+export interface PredictionResponse {
+  street: string;
+  requested_period: { start: string; end: string };
+  actual_coverage: { start: string | null; end: string | null; hours_covered: number };
+  count: number;
+  predictions: PredictionRecord[];
+  metadata: {
+    prediction_horizon_hours?: number | null;
+    generated_at?: string | null;
+    note?: string;
+  };
+}
+
+export interface ComparisonSeries {
+  key: string;
+  name: string;
+  data: DailyDataPoint[];
+  color?: string;
+  opacity?: number;
+}
+
+export interface StreetTotal {
+  street: string;
+  total: number;
+}
+
+export interface DataVisualizationProps {
+  hourlyData: HourlyDataPoint[];
+  dailyData: DailyDataPoint[];
+  hourlyPredictions?: HourlyDataPoint[];
+  dailyPredictions?: DailyDataPoint[];
+  loading: boolean;
+  dateRange: DashboardFilters['dateRange'];
+  comparisonSeries?: ComparisonSeries[];
+  streetTotals?: StreetTotal[];
 }

@@ -9,6 +9,7 @@ import {
   DailyDataPoint
 } from './types';
 import { format, startOfWeek, endOfWeek, startOfMonth, endOfMonth, startOfDay, endOfDay } from 'date-fns';
+import type { PredictionResponse } from './types';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
@@ -69,6 +70,36 @@ class PedestrianAPI {
   // Events API
   async getEventsForDate(date: string): Promise<EventsResponse> {
     return this.fetchWithErrorHandling(`/api/events/${date}`) as Promise<EventsResponse>;
+  }
+
+  // prediction API
+  async getPredictionData(
+    street: string,
+    start: string,
+    end: string
+  ): Promise<PredictionResponse> {
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/api/pedestrians/predictions?street=${encodeURIComponent(street)}&start_date=${start}&end_date=${end}`
+      );
+
+      if (!response.ok) {
+        throw new Error(`Prediction API failed: ${response.status}`);
+      }
+
+      const data = await response.json();
+      return data as PredictionResponse;
+    } catch (error) {
+      console.error("Failed to fetch prediction data:", error);
+      return {
+        street,
+        requested_period: { start, end },
+        actual_coverage: { start: null, end: null, hours_covered: 0 },
+        count: 0,
+        predictions: [],
+        metadata: { note: "No prediction data available" },
+      };
+    }
   }
 
   // Statistics calculation
@@ -159,25 +190,14 @@ class PedestrianAPI {
   }
 
   // Data transformation helpers
-  transformToHourlyData(data: PedestrianData[], date?: string): HourlyDataPoint[] {
-    const hourlyGroups = data.reduce((acc, item) => {
-      const hour = parseInt(item.hour);
-      if (!acc[hour]) {
-        acc[hour] = { total: 0, towards: 0, away: 0, count: 0 };
-      }
-      acc[hour].total += item.n_pedestrians;
-      acc[hour].towards += item.n_pedestrians_towards;
-      acc[hour].away += item.n_pedestrians_away;
-      acc[hour].count += 1;
-      return acc;
-    }, {} as Record<number, { total: number; towards: number; away: number; count: number }>);
-
-    return Object.entries(hourlyGroups).map(([hour, data]) => ({
-      hour: parseInt(hour),
-      total: Math.round(data.total / data.count),
-      towards: Math.round(data.towards / data.count),
-      away: Math.round(data.away / data.count),
-      date: date || 'All'
+  transformToHourlyData(data: any[]): HourlyDataPoint[] {
+    return data.map(d => ({
+      date: d.date ? d.date.split('T')[0] : '',
+      hour: Number(d.hour ?? new Date(d.timestamp).getHours()),
+      total: d.n_pedestrians ?? 0,
+      towards: d.towards ?? 0,
+      away: d.away ?? 0,
+      isHigh: false,
     }));
   }
 
@@ -185,19 +205,48 @@ class PedestrianAPI {
     const dailyGroups = data.reduce((acc, item) => {
       const date = item.date;
       if (!acc[date]) {
-        acc[date] = { total: 0, hours: 0 };
+        acc[date] = { 
+          total: 0, 
+          hours: 0,
+          temperature: [],
+          weather_conditions: []
+        };
       }
       acc[date].total += item.n_pedestrians;
+      if (item.temperature !== null && item.temperature !== undefined) {
+        acc[date].temperature.push(item.temperature);
+      }
+      if (item.weather_condition) {
+        acc[date].weather_conditions.push(item.weather_condition);
+      }
       acc[date].hours += 1;
       return acc;
-    }, {} as Record<string, { total: number; hours: number }>);
+    }, {} as Record<string, { 
+      total: number; 
+      hours: number;
+      temperature: number[];
+      weather_conditions: string[];
+    }>);
 
     return Object.entries(dailyGroups).map(([date, data]) => ({
       date,
       total: data.total,
       avgHourly: Math.round(data.total / data.hours),
-      weekday: new Date(date).toLocaleDateString('en-US', { weekday: 'long' })
+      weekday: new Date(date).toLocaleDateString('en-US', { weekday: 'long' }),
+      avgTemperature: data.temperature.length > 0 
+        ? Math.round(data.temperature.reduce((a, b) => a + b, 0) / data.temperature.length) 
+        : undefined,
+      mainWeatherCondition: data.weather_conditions.length > 0
+        ? this.getMostFrequent(data.weather_conditions)
+        : undefined
     }));
+  }
+
+  // Add this helper function to get the most frequent weather condition
+  private getMostFrequent(arr: string[]): string {
+    return arr.sort((a,b) =>
+      arr.filter(v => v === a).length - arr.filter(v => v === b).length
+    ).pop() || '';
   }
 }
 
