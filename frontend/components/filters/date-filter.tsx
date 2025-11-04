@@ -6,7 +6,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Calendar } from '@/components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { CalendarIcon, Clock } from 'lucide-react';
-import { format, startOfWeek, endOfWeek, startOfMonth, endOfMonth, startOfDay, endOfDay } from 'date-fns';
+import { format, startOfMonth, endOfMonth, startOfDay, endOfDay, addDays, differenceInCalendarDays, addMonths } from 'date-fns';
 import { DashboardFilters } from '@/lib/types';
 
 interface DateFilterProps {
@@ -30,12 +30,14 @@ export function DateFilter({ dateRange, onDateRangeChange }: DateFilterProps) {
         end = endOfDay(baseDate);
         break;
       case 'week':
-        start = startOfWeek(baseDate, { weekStartsOn: 1 }); // Start week on Monday
-        end = endOfWeek(baseDate, { weekStartsOn: 1 });
+        // Week starts at the SELECTED day and spans exactly 7 days
+        start = startOfDay(baseDate);
+        end = endOfDay(addDays(start, 6));
         break;
       case 'month':
-        start = startOfMonth(baseDate);
-        end = endOfMonth(baseDate);
+        // Month starts at the SELECTED day and spans exactly 1 month
+        start = startOfDay(baseDate);
+        end = endOfDay(addDays(addMonths(start, 1), -1));
         break;
       default:
         return;
@@ -57,12 +59,14 @@ export function DateFilter({ dateRange, onDateRangeChange }: DateFilterProps) {
           end = endOfDay(date);
           break;
         case 'week':
-          start = startOfWeek(date, { weekStartsOn: 1 });
-          end = endOfWeek(date, { weekStartsOn: 1 });
+          // Week starts at the SELECTED day and spans exactly 7 days
+          start = startOfDay(date);
+          end = endOfDay(addDays(start, 6));
           break;
         case 'month':
-          start = startOfMonth(date);
-          end = endOfMonth(date);
+          // Month starts at the SELECTED day and spans exactly 1 month
+          start = startOfDay(date);
+          end = endOfDay(addDays(addMonths(start, 1), -1));
           break;
         default:
           start = startOfDay(date);
@@ -87,15 +91,15 @@ export function DateFilter({ dateRange, onDateRangeChange }: DateFilterProps) {
           <SelectValue placeholder="Select time period" />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value="day">Single Day</SelectItem>
-          <SelectItem value="week">This Week</SelectItem>
-          <SelectItem value="month">This Month</SelectItem>
+          <SelectItem value="day">Day</SelectItem>
+          <SelectItem value="week">Week</SelectItem>
+          <SelectItem value="month">Month</SelectItem>
         </SelectContent>
       </Select>
 
       {/* Date Picker for Custom Selection */}
       <div className="space-y-2">
-        <label className="text-sm text-gray-600 dark:text-gray-400">Select a date:</label>
+  <label className="text-sm text-gray-600 dark:text-gray-400">{(dateRange.type === 'week' || dateRange.type === 'month') ? 'Select starting date:' : 'Select date:'}</label>
         <Popover open={isCalendarOpen} onOpenChange={setIsCalendarOpen}>
           <PopoverTrigger asChild>
             <Button
@@ -104,12 +108,9 @@ export function DateFilter({ dateRange, onDateRangeChange }: DateFilterProps) {
             >
               <CalendarIcon className="mr-2 h-4 w-4 flex-shrink-0" />
               <span className="truncate">
-                {dateRange.type === 'day'
-                  ? format(dateRange.start, 'MMM dd, yyyy')
-                  : dateRange.type === 'week'
-                  ? `Week: ${format(dateRange.start, 'MMM dd')} - ${format(dateRange.end, 'dd')}`
-                  : `${format(dateRange.start, 'MMM dd')} - ${format(dateRange.end, 'MMM dd')}`
-                }
+                {dateRange.type === 'day' && format(dateRange.start, 'MMM dd, yyyy')}
+                {dateRange.type === 'week' && format(dateRange.start, 'EEE, d MMM yyyy')}
+                {dateRange.type === 'month' && format(dateRange.start, 'EEE, d MMM yyyy')}
               </span>
             </Button>
           </PopoverTrigger>
@@ -128,7 +129,7 @@ export function DateFilter({ dateRange, onDateRangeChange }: DateFilterProps) {
       <div className="text-xs text-gray-500 dark:text-gray-400 space-y-1 pt-2 border-t dark:border-gray-700">
         <div className="flex justify-between">
           <span>Period:</span>
-          <span className="font-medium">{Math.ceil((dateRange.end.getTime() - dateRange.start.getTime()) / (1000 * 60 * 60 * 24)) + 1} days</span>
+          <span className="font-medium">{differenceInCalendarDays(dateRange.end, dateRange.start) + 1} days</span>
         </div>
         <div className="flex justify-between">
           <span>From:</span>
