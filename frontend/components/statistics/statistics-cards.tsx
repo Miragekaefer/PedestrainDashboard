@@ -1,7 +1,6 @@
 'use client';
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { Users, TrendingUp, Clock, Activity } from 'lucide-react';
 import { StatisticsData } from '@/lib/types';
 
@@ -9,9 +8,12 @@ interface StatisticsCardsProps {
   statistics: StatisticsData | null;
   loading: boolean;
   street: string;
+  currentWeather?: { condition?: string | string[]; temperature?: number; minTemp?: number; maxTemp?: number } | null;
+  viewType?: 'day' | 'week' | 'month';
+  weatherAvailable?: boolean;
 }
 
-export function StatisticsCards({ statistics, loading, street }: StatisticsCardsProps) {
+export function StatisticsCards({ statistics, loading, street, currentWeather, viewType, weatherAvailable }: StatisticsCardsProps) {
   if (loading) {
     return (
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -53,21 +55,7 @@ export function StatisticsCards({ statistics, loading, street }: StatisticsCards
     return num.toLocaleString();
   };
 
-  const getWeatherImpactColor = (impact: string) => {
-    switch (impact) {
-      case 'high': return 'destructive';
-      case 'medium': return 'secondary';
-      default: return 'outline';
-    }
-  };
-
-  const getWeatherImpactText = (impact: string) => {
-    switch (impact) {
-      case 'high': return 'High Impact';
-      case 'medium': return 'Medium Impact';
-      default: return 'Low Impact';
-    }
-  };
+  // Weather impact display removed per request
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -124,12 +112,38 @@ export function StatisticsCards({ statistics, loading, street }: StatisticsCards
           <Activity className="h-4 w-4 text-muted-foreground" />
         </CardHeader>
         <CardContent>
-          <Badge variant={getWeatherImpactColor(statistics.weatherImpact)} className="mb-2">
-            {getWeatherImpactText(statistics.weatherImpact)}
-          </Badge>
-          <p className="text-xs text-muted-foreground">
-            on pedestrian count
-          </p>
+          {viewType === 'month' ? (
+            <p className="text-sm text-muted-foreground mb-2">No weather display is possible in the monthly view</p>
+          ) : !weatherAvailable ? (
+            <p className="text-sm text-muted-foreground mb-2">No weather display is possible for this time period</p>
+          ) : (
+            currentWeather ? (
+              <div className="mb-2">
+                <div className="flex items-center space-x-3">
+                  <div className="text-sm font-medium">
+                    {currentWeather.minTemp !== undefined && currentWeather.maxTemp !== undefined
+                      ? (currentWeather.minTemp === currentWeather.maxTemp
+                          ? `${Math.round(currentWeather.minTemp)}°C`
+                          : `${Math.round(currentWeather.minTemp)}–${Math.round(currentWeather.maxTemp)}°C`)
+                      : (currentWeather.temperature !== undefined
+                          ? `${Math.round(currentWeather.temperature)}°C`
+                          : '—')}
+                  </div>
+                  <div className="text-xs text-muted-foreground capitalize">
+                    {(() => {
+                      const cond = currentWeather.condition;
+                      if (Array.isArray(cond)) {
+                        if (cond.length === 1) return `Mostly ${cond[0]}`;
+                        if (cond.length >= 2) return `Mostly ${cond[0]} and ${cond[1]}`;
+                        return 'Unknown';
+                      }
+                      return cond ? `Mostly ${cond}` : 'Unknown';
+                    })()}
+                  </div>
+                </div>
+              </div>
+            ) : null
+          )}
         </CardContent>
       </Card>
     </div>

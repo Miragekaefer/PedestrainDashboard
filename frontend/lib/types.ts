@@ -99,6 +99,9 @@ export interface HourlyDataPoint {
   away: number;
   date: string;
   isHigh?: boolean; // optional, used for highlighting
+  // optional weather info for the hour
+  temperature?: number;
+  weather_condition?: string;
 }
 
 export interface DailyDataPoint {
@@ -106,6 +109,9 @@ export interface DailyDataPoint {
   total: number;
   avgHourly: number;
   weekday: string;
+  // optional aggregated weather info for the day
+  temperature?: number;
+  weather_condition?: string;
 }
 
 // Calendar event types

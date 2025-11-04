@@ -198,6 +198,9 @@ class PedestrianAPI {
       towards: d.towards ?? 0,
       away: d.away ?? 0,
       isHigh: false,
+      // include optional weather info when present
+      temperature: typeof d.temperature === 'number' ? d.temperature : undefined,
+      weather_condition: d.weather_condition ?? undefined,
     }));
   }
 
@@ -205,19 +208,45 @@ class PedestrianAPI {
     const dailyGroups = data.reduce((acc, item) => {
       const date = item.date;
       if (!acc[date]) {
-        acc[date] = { total: 0, hours: 0 };
+        acc[date] = { total: 0, hours: 0, tempSum: 0, tempCount: 0, condCounts: {} as Record<string, number> };
       }
       acc[date].total += item.n_pedestrians;
       acc[date].hours += 1;
-      return acc;
-    }, {} as Record<string, { total: number; hours: number }>);
 
-    return Object.entries(dailyGroups).map(([date, data]) => ({
-      date,
-      total: data.total,
-      avgHourly: Math.round(data.total / data.hours),
-      weekday: new Date(date).toLocaleDateString('en-US', { weekday: 'long' })
-    }));
+      if (item.temperature !== null && item.temperature !== undefined && !Number.isNaN(item.temperature)) {
+        acc[date].tempSum += item.temperature as number;
+        acc[date].tempCount += 1;
+      }
+
+      if (item.weather_condition) {
+        acc[date].condCounts[item.weather_condition] = (acc[date].condCounts[item.weather_condition] || 0) + 1;
+      }
+
+      return acc;
+    }, {} as Record<string, { total: number; hours: number; tempSum: number; tempCount: number; condCounts: Record<string, number> }>);
+
+    return Object.entries(dailyGroups).map(([date, data]) => {
+      let avgTemp: number | undefined = undefined;
+      if (data.tempCount > 0) {
+        avgTemp = Math.round(data.tempSum / data.tempCount);
+      }
+
+      let topCondition: string | undefined = undefined;
+      const condEntries = Object.entries(data.condCounts);
+      if (condEntries.length > 0) {
+        condEntries.sort((a, b) => b[1] - a[1]);
+        topCondition = condEntries[0][0];
+      }
+
+      return {
+        date,
+        total: data.total,
+        avgHourly: Math.round(data.total / data.hours),
+        weekday: new Date(date).toLocaleDateString('en-US', { weekday: 'long' }),
+        temperature: avgTemp,
+        weather_condition: topCondition,
+      };
+    });
   }
 }
 
