@@ -1,0 +1,1 @@
+# weather fetcher is directly inside the predcition script as it is not needed elsewhere

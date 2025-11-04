@@ -6,20 +6,38 @@ import redis
 from datetime import datetime
 import config
 
-def build_sorted_set_indexes():
-    """Erstellt Indizes für alle bestehenden Daten"""
+def build_sorted_set_indexes(streets: list[str] | None = None):
+    """Erstellt Indizes für alle bestehenden Daten.
+
+    Wenn ``streets`` nicht angegeben ist, werden alle Straßen dynamisch aus den
+    vorhandenen Keys in Redis ermittelt (Pattern ``pedestrian:hourly:*``).
+    """
     r = redis.Redis(
-        host=config.REDIS_HOST, 
+        host=config.REDIS_HOST,
         port=config.REDIS_PORT,
         decode_responses=True
     )
-    
-    streets = ["Kaiserstraße", "Spiegelstraße", "Schönbornstraße"]
-    
+
+    # Dynamische Ermittlung aller vorhandenen Straßen falls nicht übergeben
+    if streets is None:
+        discovered_streets = set()
+        cursor = 0
+        pattern = "pedestrian:hourly:*"
+        while True:
+            cursor, keys = r.scan(cursor=cursor, match=pattern, count=1000)
+            for key in keys:
+                parts = key.split(":")
+                # Format: pedestrian:hourly:{street}:{date}:{hour}
+                if len(parts) >= 5:
+                    discovered_streets.add(parts[2])
+            if cursor == 0:
+                break
+        streets = sorted(discovered_streets)
+
     print("="*70)
     print("Building Sorted Set Indexes for Historical Data")
     print("="*70)
-    
+
     for street in streets:
         print(f"\nProcessing {street}...")
         pattern = f"pedestrian:hourly:{street}:*"

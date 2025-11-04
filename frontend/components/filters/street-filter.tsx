@@ -10,6 +10,9 @@ interface StreetFilterProps {
 }
 
 export function StreetFilter({ streets, selectedStreet, onStreetChange }: StreetFilterProps) {
+  // Add "All_streets" at the top
+  const options = ['All_streets', ...streets];
+
   return (
     <div className="space-y-2">
       <label className="text-sm font-medium text-gray-700 flex items-center space-x-2">
@@ -20,13 +23,16 @@ export function StreetFilter({ streets, selectedStreet, onStreetChange }: Street
         <SelectTrigger className="w-full">
           <SelectValue placeholder="Select a street" />
         </SelectTrigger>
-        <SelectContent>
-          {streets.map((street) => (
-            <SelectItem key={street} value={street}>
-              {street}
+          <SelectContent>
+            <SelectItem key="All_streets" value="All_streets">
+              All Streets
             </SelectItem>
-          ))}
-        </SelectContent>
+            {streets.map((street) => (
+              <SelectItem key={street} value={street}>
+                {street}
+              </SelectItem>
+            ))}
+          </SelectContent>
       </Select>
     </div>
   );
