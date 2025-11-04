@@ -29,6 +29,7 @@ export function Dashboard() {
   const [statistics, setStatistics] = useState<StatisticsData | null>(null);
   const [hourlyData, setHourlyData] = useState<HourlyDataPoint[]>([]);
   const [dailyData, setDailyData] = useState<DailyDataPoint[]>([]);
+  const [currentWeather, setCurrentWeather] = useState<{ condition?: string; temperature?: number } | null>(null);
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
   const [streets, setStreets] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -209,7 +210,7 @@ useEffect(() => {
       // ✅ Always defined safely
 // Transform data
       const hourlyChartData = pedestrianAPI.transformToHourlyData(combinedData ?? []);
-      const dailyChartData = pedestrianAPI.transformToDailyData(combinedData ?? []);
+      const dailyChartData = pedestrianAPI.transformToDailyData(combinedData ?? []) as DailyDataPoint[];
       const hourlyPredictionData = pedestrianAPI.transformToHourlyData(predictionData ?? []);
       const dailyPredictionData = pedestrianAPI.transformToDailyData(predictionData ?? []);
 
@@ -217,6 +218,35 @@ useEffect(() => {
       setHourlyData(hourlyChartData);
       setDailyData(fillDailyData(dailyChartData, filters.dateRange.start, filters.dateRange.end));
       setHourlyPredictions(hourlyPredictionData);
+        // Determine representative/current weather only when a single day is selected
+        try {
+          if (filters.dateRange.type === 'day') {
+            const targetDate = startDate; // YYYY-MM-DD from filters
+            const dayRecords = dailyChartData.filter(r => r.date === targetDate);
+            if (dayRecords && dayRecords.length > 0) {
+              // average temperature for the day (if available)
+              const avgTemp = dayRecords.reduce((a, b) => a + (b.avgTemperature || 0), 0) / dayRecords.length;
+              // most frequent weather condition
+              const conds = dayRecords.map(d => d.mainWeatherCondition).filter(Boolean) as string[];
+              let mode: string | undefined = undefined;
+              if (conds.length > 0) {
+                const counts: Record<string, number> = {};
+                conds.forEach(c => { counts[c] = (counts[c] || 0) + 1; });
+                mode = Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0];
+              }
+
+              setCurrentWeather({ condition: mode, temperature: dayRecords[0].avgTemperature });
+            } else {
+              setCurrentWeather(null);
+            }
+          } else {
+            // for week/month selections we don't show specific weather
+            setCurrentWeather(null);
+          }
+        } catch (err) {
+          console.warn('Failed to compute current weather:', err);
+          setCurrentWeather(null);
+        }
       setDailyPredictions(dailyPredictionData);
       setStatistics(combinedStats);
       await loadCalendarEvents();
@@ -413,7 +443,14 @@ useEffect(() => {
 
             {/* Main Content */}
             <div className="lg:col-span-4 space-y-6 h-full overflow-y-auto">
-              <StatisticsCards statistics={statistics} loading={loading} street={filters.street} />
+              {/* Statistics Cards */}
+              <StatisticsCards
+                statistics={statistics}
+                loading={loading}
+                street={filters.street}
+                currentWeather={currentWeather}
+                showWeather={filters.dateRange.type === 'day'}
+              />
 
               <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
                 <div className="xl:col-span-2">
