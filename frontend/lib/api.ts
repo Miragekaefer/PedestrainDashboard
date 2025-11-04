@@ -205,19 +205,48 @@ class PedestrianAPI {
     const dailyGroups = data.reduce((acc, item) => {
       const date = item.date;
       if (!acc[date]) {
-        acc[date] = { total: 0, hours: 0 };
+        acc[date] = { 
+          total: 0, 
+          hours: 0,
+          temperature: [],
+          weather_conditions: []
+        };
       }
       acc[date].total += item.n_pedestrians;
+      if (item.temperature !== null && item.temperature !== undefined) {
+        acc[date].temperature.push(item.temperature);
+      }
+      if (item.weather_condition) {
+        acc[date].weather_conditions.push(item.weather_condition);
+      }
       acc[date].hours += 1;
       return acc;
-    }, {} as Record<string, { total: number; hours: number }>);
+    }, {} as Record<string, { 
+      total: number; 
+      hours: number;
+      temperature: number[];
+      weather_conditions: string[];
+    }>);
 
     return Object.entries(dailyGroups).map(([date, data]) => ({
       date,
       total: data.total,
       avgHourly: Math.round(data.total / data.hours),
-      weekday: new Date(date).toLocaleDateString('en-US', { weekday: 'long' })
+      weekday: new Date(date).toLocaleDateString('en-US', { weekday: 'long' }),
+      avgTemperature: data.temperature.length > 0 
+        ? Math.round(data.temperature.reduce((a, b) => a + b, 0) / data.temperature.length) 
+        : undefined,
+      mainWeatherCondition: data.weather_conditions.length > 0
+        ? this.getMostFrequent(data.weather_conditions)
+        : undefined
     }));
+  }
+
+  // Add this helper function to get the most frequent weather condition
+  private getMostFrequent(arr: string[]): string {
+    return arr.sort((a,b) =>
+      arr.filter(v => v === a).length - arr.filter(v => v === b).length
+    ).pop() || '';
   }
 }
 
