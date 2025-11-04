@@ -19,7 +19,7 @@ interface CalendarComponentProps {
 // Quick fix: shift date by one day for calendar display
 const fixDate = (date: string | Date) => {
   const d = new Date(date);
-  d.setDate(d.getDate() - 1);
+  d.setDate(d.getDate() );
   return d;
 };
 
