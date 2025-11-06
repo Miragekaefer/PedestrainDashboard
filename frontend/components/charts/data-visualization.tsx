@@ -90,15 +90,24 @@ function buildCombinedDaily(actual: DailyDataPoint[] = [], predicted: DailyDataP
 // ---------- Tooltips ----------
 const HourlyTooltip = ({ active, payload }: any) => {
   if (!active || !payload?.length) return null;
-  const p = payload[0]?.payload;
+  const p = payload[0].payload;
   if (!p) return null;
   return (
-    <div className="bg-white/95 p-2 rounded shadow text-sm">
-      <div className="font-medium">
+    <div className="bg-white/95 p-3 rounded shadow text-sm text-black border border-gray-200">
+      <div className="font-medium mb-2 pb-2 border-b border-gray-200">
         {format(parseISO(p.date), 'PPP')} — {String(p.hour).padStart(2, '0')}:00
       </div>
-      <div>Actual: {p.actual ?? '—'}</div>
-      <div>Predicted: {p.predicted ?? '—'}</div>
+      {payload.map((item: any, index: number) => {
+        const value = item.payload[item.dataKey];
+        // Skip if value is null or undefined
+        if (value == null) return null;
+        return (
+          <div key={index} style={{ color: item.stroke || item.fill }} className="flex justify-between gap-4 py-0.5">
+            <span className="font-medium">{item.name || item.dataKey}:</span>
+            <span className="font-semibold">{value}</span>
+          </div>
+        );
+      })}
     </div>
   );
 };
@@ -108,10 +117,21 @@ const DailyTooltip = ({ active, payload }: any) => {
   const p = payload[0]?.payload;
   if (!p) return null;
   return (
-    <div className="bg-white/95 p-2 rounded shadow text-sm">
-      <div className="font-medium">{format(parseISO(p.date), 'PPP')} ({p.weekday})</div>
-      <div>Actual: {p.actual ?? '—'}</div>
-      <div>Predicted: {p.predicted ?? '—'}</div>
+    <div className="bg-white/95 p-3 rounded shadow text-sm text-black border border-gray-200">
+      <div className="font-medium mb-2 pb-2 border-b border-gray-200">
+        {format(parseISO(p.date), 'PPP')} ({p.weekday})
+      </div>
+      {payload.map((item: any, index: number) => {
+        const value = item.payload[item.dataKey];
+        // Skip if value is null or undefined
+        if (value == null) return null;
+        return (
+          <div key={index} style={{ color: item.stroke || item.fill }} className="flex justify-between gap-4 py-0.5">
+            <span className="font-medium">{item.name || item.dataKey}:</span>
+            <span className="font-semibold">{value}</span>
+          </div>
+        );
+      })}
     </div>
   );
 };
@@ -156,9 +176,10 @@ export const DataVisualization: React.FC<Props> = ({
     return values[index];
   }, [combinedHourly]);
 
-  const peakLineData = useMemo(() => {
+  const hourlyDataWithPeaks = useMemo(() => {
     return combinedHourly.map(d => ({
       ...d,
+      dateTime: `${d.date}T${String(d.hour).padStart(2, '0')}:00`, // unique key for each hour
       peak: d.actual >= peakThreshold ? d.actual : null, 
     }));
   }, [combinedHourly, peakThreshold]);
@@ -203,11 +224,19 @@ export const DataVisualization: React.FC<Props> = ({
               className="h-full"
             >
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={combinedHourly}>
+                <LineChart data={hourlyDataWithPeaks}>
                   <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="hour" tickFormatter={(h) => `${String(h).padStart(2, '0')}:00`} />
+                  <XAxis 
+                    dataKey="dateTime" 
+                    tickFormatter={(dt) => {
+                      const date = new Date(dt);
+                      return `${format(date, 'MMM dd')} ${String(date.getHours()).padStart(2, '0')}:00`;
+                    }}
+                    angle={-45}
+                    textAnchor="end"
+                    height={80}
+                  />
                   <YAxis />
-                  <Tooltip content={HourlyTooltip} />
                   <Legend />
 
                   {/* Actual line with custom dots marking peaks */}
@@ -217,7 +246,8 @@ export const DataVisualization: React.FC<Props> = ({
                     name="Actual"
                     stroke="#2563eb"
                     strokeWidth={2}
-                    dot={false} // normale Punkte entfernen
+                    dot={false}
+                    activeDot={{ r: 6 }}
                   />
 
                   {/* Predicted line: only show where predicted isn't null */}
@@ -230,17 +260,20 @@ export const DataVisualization: React.FC<Props> = ({
                     strokeDasharray="5 5"
                     strokeWidth={2}
                     dot={false}
+                    activeDot={{ r: 6 }}
                   />
 
                   <Line
                     type="monotone"
-                    data={peakLineData}
                     dataKey="peak"
+                    name="Peak Hours"
                     stroke="#ef4444"
                     strokeWidth={4}
                     dot={false}
+                    activeDot={{ r: 6 }}
                     isAnimationActive={false}
                   />
+                  <Tooltip content={HourlyTooltip} shared={true} />
                 </LineChart>
               </ResponsiveContainer>
             </motion.div>
@@ -298,7 +331,7 @@ export const DataVisualization: React.FC<Props> = ({
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis dataKey="date" tickFormatter={(d) => format(parseISO(d), 'MMM dd')} />
                     <YAxis />
-                    <Tooltip />
+                    <Tooltip content={DailyTooltip} />
                     <Legend />
 
                     <Bar dataKey="actual" name="Selected" barSize={22} fill="#2563eb" />

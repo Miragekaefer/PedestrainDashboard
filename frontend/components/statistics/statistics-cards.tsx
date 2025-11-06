@@ -756,6 +756,18 @@ export function StatisticsCards({ statistics, loading, street, dateRange, hourly
     }
   };
 
+  // Tailwind background/text classes for each impact level
+  const getWeatherImpactBgClass = (impact: string) => {
+    switch (impact) {
+      case 'high':
+        return 'bg-red-600 text-white';
+      case 'medium':
+        return 'bg-yellow-400 text-black';
+      default:
+        return 'bg-gray-200 text-gray-800';
+    }
+  };
+
   const getWeatherImpactText = (impact: string) => {
     switch (impact) {
       case 'high': return 'High Impact';
@@ -971,9 +983,11 @@ export function StatisticsCards({ statistics, loading, street, dateRange, hourly
           <Activity className="h-4 w-4 text-muted-foreground" />
         </CardHeader>
         <CardContent>
-          <Badge variant={getWeatherImpactColor(statistics.weatherImpact)} className="mb-2">
+
+          <Badge variant={getWeatherImpactColor(statistics.weatherImpact)} className={`mb-2 ${getWeatherImpactBgClass(statistics.weatherImpact)}`}>
             {getWeatherImpactText(statistics.weatherImpact)}
           </Badge>
+
           <p className="text-xs text-muted-foreground">
             on pedestrian count
           </p>

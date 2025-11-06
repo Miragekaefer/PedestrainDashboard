@@ -2,6 +2,18 @@
 
 import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+function getPeakHourRange(peakHour: number) {
+  // Returns a string like "16:00–18:00 Uhr" for a given peak hour (e.g., 16)
+  const start = peakHour.toString().padStart(2, '0') + ':00';
+  const end = (peakHour + 2).toString().padStart(2, '0') + ':00';
+  return `${start}–${end} Uhr`;
+}
+
+function getPercentChange(today: number, yesterday: number) {
+  if (yesterday === 0) return null;
+  const percent = ((today - yesterday) / yesterday) * 100;
+  return percent;
+}
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { TrendingUp, MapPin } from 'lucide-react';
@@ -30,6 +42,7 @@ export function Dashboard() {
   const [statistics, setStatistics] = useState<StatisticsData | null>(null);
   const [hourlyData, setHourlyData] = useState<HourlyDataPoint[]>([]);
   const [dailyData, setDailyData] = useState<DailyDataPoint[]>([]);
+  const [currentWeather, setCurrentWeather] = useState<{ condition?: string; temperature?: number } | null>(null);
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
   const [streets, setStreets] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -213,7 +226,7 @@ useEffect(() => {
       // ✅ Always defined safely
 // Transform data
       const hourlyChartData = pedestrianAPI.transformToHourlyData(combinedData ?? []);
-      const dailyChartData = pedestrianAPI.transformToDailyData(combinedData ?? []);
+      const dailyChartData = pedestrianAPI.transformToDailyData(combinedData ?? []) as DailyDataPoint[];
       const hourlyPredictionData = pedestrianAPI.transformToHourlyData(predictionData ?? []);
       const dailyPredictionData = pedestrianAPI.transformToDailyData(predictionData ?? []);
 
@@ -221,6 +234,35 @@ useEffect(() => {
       setHourlyData(hourlyChartData);
       setDailyData(fillDailyData(dailyChartData, filters.dateRange.start, filters.dateRange.end));
       setHourlyPredictions(hourlyPredictionData);
+        // Determine representative/current weather only when a single day is selected
+        try {
+          if (filters.dateRange.type === 'day') {
+            const targetDate = startDate; // YYYY-MM-DD from filters
+            const dayRecords = dailyChartData.filter(r => r.date === targetDate);
+            if (dayRecords && dayRecords.length > 0) {
+              // average temperature for the day (if available)
+              const avgTemp = dayRecords.reduce((a, b) => a + (b.avgTemperature || 0), 0) / dayRecords.length;
+              // most frequent weather condition
+              const conds = dayRecords.map(d => d.mainWeatherCondition).filter(Boolean) as string[];
+              let mode: string | undefined = undefined;
+              if (conds.length > 0) {
+                const counts: Record<string, number> = {};
+                conds.forEach(c => { counts[c] = (counts[c] || 0) + 1; });
+                mode = Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0];
+              }
+
+              setCurrentWeather({ condition: mode, temperature: dayRecords[0].avgTemperature });
+            } else {
+              setCurrentWeather(null);
+            }
+          } else {
+            // for week/month selections we don't show specific weather
+            setCurrentWeather(null);
+          }
+        } catch (err) {
+          console.warn('Failed to compute current weather:', err);
+          setCurrentWeather(null);
+        }
       setDailyPredictions(dailyPredictionData);
       setStatistics(combinedStats);
       await loadCalendarEvents();
@@ -346,7 +388,7 @@ useEffect(() => {
   }
 
   return (
-    <div className="h-screen flex flex-col bg-gray-50 dark:bg-gray-900">
+    <div className="min-h-screen flex flex-col bg-gray-50 dark:bg-gray-900">
       {/* Header */}
       <header className="bg-white dark:bg-gray-800 shadow-sm border-b dark:border-gray-700 flex-shrink-0">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -366,12 +408,98 @@ useEffect(() => {
         </div>
       </header>
 
-      <div className="flex-1 overflow-hidden">
+      <div className="flex-1 overflow-y-auto">
         <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-6 h-full">
+          {/* Optimal Opening / Staffing Time Recommendation */}
+          <div className="mb-6 space-y-4">
+            <Card>
+              <CardHeader>
+                <CardTitle>Optimal Opening / Staffing Time</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {statistics && typeof statistics.peakHour === 'number' && (
+                  <div className="text-gray-800 dark:text-gray-100">
+                    <span>
+                      Increased visitor numbers are expected between <b>{getPeakHourRange(statistics.peakHour)}</b>. Consider scheduling additional staff or special offers during this period.
+                    </span>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Dynamic Promotion Timing Recommendation (EN) */}
+            {(() => {
+              // Use the selected filter start date as reference
+              const filterStart = filters.dateRange?.start ? new Date(filters.dateRange.start) : new Date();
+              const oneWeek = 7 * 24 * 60 * 60 * 1000;
+              const oneMonth = 30 * 24 * 60 * 60 * 1000;
+              let nextEvent = null;
+              let minDiff = Infinity;
+              for (const event of calendarEvents) {
+                const diff = new Date(event.date).getTime() - filterStart.getTime();
+                if (diff >= 0 && diff < minDiff && (diff < oneWeek || (!nextEvent && diff < oneMonth))) {
+                  nextEvent = event;
+                  minDiff = diff;
+                }
+              }
+              if (!nextEvent) return null;
+              // Format event date (e.g. Friday)
+              const eventDate = new Date(nextEvent.date);
+              const weekday = eventDate.toLocaleDateString('en-US', { weekday: 'long' });
+              // Suggest campaign the day before
+              const campaignDate = new Date(eventDate);
+              campaignDate.setDate(eventDate.getDate() - 1);
+              const campaignWeekday = campaignDate.toLocaleDateString('en-US', { weekday: 'long' });
+              // Example impact (static for now)
+              const impact = 25;
+              return (
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Promotion Timing</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-gray-800 dark:text-gray-100 space-y-2">
+                      <div className="pl-2 border-l-2 border-gray-300 dark:border-gray-700">
+                        <span className="block">{`On ${weekday}, ${nextEvent.name ? nextEvent.name : 'an event'} takes place, and visitor numbers are expected to increase by `}<b>{impact}%</b>{`. Start your social media campaign on ${campaignWeekday} evening.`}</span>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })()}
+
+            {/* Customer Flow Direction Insight */}
+            {statistics && typeof statistics.directionRatio === 'number' && (
+              <Card>
+                <CardHeader>
+                  <CardTitle>Customer Flow Direction Insight</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-gray-800 dark:text-gray-100 space-y-2">
+                    <div>
+                      <span className="italic">Uses Direction Flow</span>
+                    </div>
+                    <div className="pl-2 border-l-2 border-gray-300 dark:border-gray-700">
+                      <span className="block">
+                        <b>{Math.round(statistics.directionRatio)}%</b> of pedestrians are moving towards the city center.
+                      </span>
+                    </div>
+                    <div className="text-sm text-gray-600 dark:text-gray-400 pl-2 mt-1">
+                      {statistics.directionRatio > 60 
+                        ? "High inbound traffic – ideal for promotions targeting visitors entering the area."
+                        : statistics.directionRatio < 40
+                        ? "High outbound traffic – consider positioning offers for people leaving the area."
+                        : "Balanced traffic flow in both directions."}
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+          </div>
           <div className="grid grid-cols-1 lg:grid-cols-5 gap-6 h-full">
             {/* Sidebar - Filters */}
-            <div className="lg:col-span-1 h-full overflow-y-auto">
-              <Card className="h-full flex flex-col">
+            <div className="lg:col-span-1">
+              <Card className="sticky top-0">
                 <CardHeader className="flex-shrink-0">
                   <CardTitle className="flex items-center space-x-2">
                     <MapPin className="h-5 w-5" />
@@ -460,13 +588,13 @@ useEffect(() => {
                     loading={loading}
                     futureEvents={futureEvents}
                     dateRange={filters.dateRange}
-                  />
+                    />
+                  </div>
                 </div>
               </div>
             </div>
           </div>
         </div>
       </div>
-    </div>
   );
 }

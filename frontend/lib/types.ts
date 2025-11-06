@@ -106,6 +106,8 @@ export interface DailyDataPoint {
   total: number;
   avgHourly: number;
   weekday: string;
+  avgTemperature?: number;
+  mainWeatherCondition?: string;
 }
 
 // Calendar event types
