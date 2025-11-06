@@ -1,4 +1,3 @@
-
 'use client';
 
 import React from 'react';
@@ -14,15 +13,17 @@ interface HeatmapData {
 
 
 import { DashboardFilters } from '@/lib/types';
+import { format, addDays, eachDayOfInterval } from 'date-fns';
 
 interface HeatmapVisualizationProps {
   hourlyData: HourlyDataPoint[];
+  hourlyPredictions?: HourlyDataPoint[];
   loading: boolean;
   street: string;
   dateRange?: DashboardFilters['dateRange'];
 }
 
-export function HeatmapVisualization({ hourlyData, loading, street, dateRange }: HeatmapVisualizationProps) {
+export function HeatmapVisualization({ hourlyData, hourlyPredictions = [], loading, street, dateRange }: HeatmapVisualizationProps) {
   const [heatmapData, setHeatmapData] = useState<HeatmapData[]>([]);
   const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
   const hours = Array.from({ length: 24 }, (_, i) => i);
@@ -30,21 +31,41 @@ export function HeatmapVisualization({ hourlyData, loading, street, dateRange }:
   // Determine which days to show based on dateRange
   let daysToShow: number[] = Array.from({ length: 7 }, (_, i) => i);
   let dayLabels: string[] = days;
+  let dateStrings: string[] = [];
+  
   if (dateRange && dateRange.type === 'day') {
     // Show only the selected day
     const selectedDate = dateRange.start;
     const selectedDay = selectedDate.getDay();
     daysToShow = [selectedDay];
-    dayLabels = [days[selectedDay]];
+    dayLabels = [format(selectedDate, 'EEE, d MMM')]; // Show date
+    dateStrings = [format(selectedDate, 'yyyy-MM-dd')];
+  } else if (dateRange && dateRange.type === 'week') {
+    // Show week starting from the selected start date
+    const weekDays = eachDayOfInterval({
+      start: dateRange.start,
+      end: dateRange.end
+    });
+    daysToShow = weekDays.map(d => d.getDay());
+    dayLabels = weekDays.map(d => format(d, 'EEE, d MMM')); // Show date with day name
+    dateStrings = weekDays.map(d => format(d, 'yyyy-MM-dd'));
   }
 
-  // Process data when hourlyData changes
+  // Process data when hourlyData or predictions change
   useEffect(() => {
-    if (!hourlyData.length) return;
+    if (!hourlyData.length && !hourlyPredictions.length) return;
+
+    // Map date strings to day indices for filtering
+    const dateToDay = new Map<string, number>();
+    if (dateStrings.length > 0) {
+      dateStrings.forEach((dateStr, idx) => {
+        dateToDay.set(dateStr, daysToShow[idx]);
+      });
+    }
 
     // Initialize accumulator for sum and count for each day-hour combination
     const accumulator: Record<string, { sum: number; count: number }> = {};
-    
+
     // Initialize all possible day-hour combinations with 0
     for (let day = 0; day < 7; day++) {
       for (let hour = 0; hour < 24; hour++) {
@@ -53,13 +74,53 @@ export function HeatmapVisualization({ hourlyData, loading, street, dateRange }:
       }
     }
 
-    // Aggregate data by day and hour
+    const now = new Date();
+    const todayStr = format(now, 'yyyy-MM-dd');
+    const currentHour = now.getHours();
+
+    // Aggregate actual data by day and hour
     hourlyData.forEach(entry => {
-      const date = new Date(entry.date);
-      const day = date.getDay(); // 0-6
+      const dateStr = entry.date;
+      let day: number;
+      
+      // If we have specific date filtering (day or week mode), use that
+      if (dateToDay.size > 0) {
+        if (!dateToDay.has(dateStr)) return; // Skip dates not in our range
+        day = dateToDay.get(dateStr)!;
+      } else {
+        const date = new Date(dateStr);
+        day = date.getDay(); // 0-6
+      }
+      
       const hour = entry.hour;
       const key = `${day}-${hour}`;
+
+      accumulator[key].sum += entry.total;
+      accumulator[key].count += 1;
+    });
+
+    // Aggregate predictions for future hours/days
+    hourlyPredictions.forEach(entry => {
+      const dateStr = entry.date;
+      const isToday = dateStr === todayStr;
+      const isFuture = dateStr > todayStr || (isToday && entry.hour > currentHour);
+
+      if (!isFuture) return; // Only use predictions for future
+
+      let day: number;
       
+      // If we have specific date filtering (day or week mode), use that
+      if (dateToDay.size > 0) {
+        if (!dateToDay.has(dateStr)) return; // Skip dates not in our range
+        day = dateToDay.get(dateStr)!;
+      } else {
+        const date = new Date(dateStr);
+        day = date.getDay(); // 0-6
+      }
+      
+      const hour = entry.hour;
+      const key = `${day}-${hour}`;
+
       accumulator[key].sum += entry.total;
       accumulator[key].count += 1;
     });
@@ -77,7 +138,7 @@ export function HeatmapVisualization({ hourlyData, loading, street, dateRange }:
 
     console.log('Processed heatmap data:', processedData);
     setHeatmapData(processedData);
-  }, [hourlyData]);
+  }, [hourlyData, hourlyPredictions, dateRange]);
 
   // Find max value for color scaling
     const maxValue = Math.max(...heatmapData.map(d => d.value)) || 1; // Prevent division by zero  // Color scale function with 5 distinct levels
@@ -177,23 +238,25 @@ export function HeatmapVisualization({ hourlyData, loading, street, dateRange }:
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base">
           {dateRange && dateRange.type === 'day'
-            ? `Traffic Pattern for ${dayLabels[0]} - ${street}`
-            : `Weekly Traffic Pattern - ${street}`}
+            ? `Traffic Pattern - ${street}`
+            : dateRange && dateRange.type === 'week'
+            ? `Weekly Traffic Pattern (${format(dateRange.start, 'd MMM')} - ${format(dateRange.end, 'd MMM')}) - ${street}`
+            : `Traffic Pattern - ${street}`}
         </CardTitle>
       </CardHeader>
-      <CardContent>
+      <CardContent className="pb-4">
         <div className="overflow-x-auto">
           <div className="w-full min-w-0">
             {/* Time labels on top */}
             <div className="flex">
-              <div className="w-20" /> {/* Space for day labels */}
+              <div className="w-24" /> {/* Space for day labels */}
               {hours.map(hour => (
                 <div
                   key={hour}
-                  className="flex-1 text-center text-sm text-gray-600 dark:text-gray-400"
+                  className="flex-1 text-center text-xs text-gray-600 dark:text-gray-400"
                 >
                   {hour.toString().padStart(2, '0')}
                 </div>
@@ -203,7 +266,7 @@ export function HeatmapVisualization({ hourlyData, loading, street, dateRange }:
             {/* Heatmap grid */}
             {daysToShow.map((day, idx) => (
               <div key={day} className="flex items-center">
-                <div className="w-20 text-xs text-gray-600 dark:text-gray-400">
+                <div className="w-24 text-xs text-gray-600 dark:text-gray-400 pr-2">
                   {dayLabels[idx]}
                 </div>
                 {hours.map(hour => {
@@ -211,7 +274,7 @@ export function HeatmapVisualization({ hourlyData, loading, street, dateRange }:
                   return (
                     <div
                       key={hour}
-                      className="flex-1 aspect-square border border-gray-100 dark:border-gray-800 relative group min-w-[18px]"
+                      className="flex-1 aspect-square border border-gray-100 dark:border-gray-800 relative group min-w-[12px]"
                       style={{
                         backgroundColor: getColor(value),
                         transition: 'background-color 0.2s',
@@ -228,12 +291,12 @@ export function HeatmapVisualization({ hourlyData, loading, street, dateRange }:
             ))}
 
             {/* Legend as horizontal color scale with compact boundaries below */}
-            <div className="mt-4 w-full">
-              <div className="text-sm text-gray-600 dark:text-gray-400 mb-2">Traffic density</div>
+            <div className="mt-3 w-full">
+              <div className="text-xs text-gray-600 dark:text-gray-400 mb-1.5">Traffic density</div>
 
               {/* Color scale */}
               <div className="flex items-center w-full">
-                <div className="flex-1 h-4 rounded overflow-hidden flex">
+                <div className="flex-1 h-3 rounded overflow-hidden flex">
                   {colorSteps.map((color, i) => (
                     <div
                       key={i}
@@ -244,7 +307,7 @@ export function HeatmapVisualization({ hourlyData, loading, street, dateRange }:
               </div>
 
               {/* Verbesserte Intervall-Labels */}
-              <div className="mt-1 flex items-center justify-between text-xs text-gray-600 dark:text-gray-400">
+              <div className="mt-0.5 flex items-center justify-between text-xs text-gray-600 dark:text-gray-400">
                 {legendSteps.map((v, i) => (
                   <div key={i} style={{ flex: 1, textAlign: 'center' }}>
                     {v}

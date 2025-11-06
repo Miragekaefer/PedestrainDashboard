@@ -26,7 +26,7 @@ import { DataVisualization } from './charts/data-visualization';
 import { HeatmapVisualization } from './charts/heatmap-visualization';
 import { StatisticsCards } from './statistics/statistics-cards';
 import { ThemeToggle } from './theme-toggle';
-import { eachDayOfInterval, format, isAfter } from 'date-fns';
+import { eachDayOfInterval, format, isAfter, addMonths, subMonths } from 'date-fns';
 
 export function Dashboard() {
   const [filters, setFilters] = useState<DashboardFilters>({
@@ -71,9 +71,8 @@ export function Dashboard() {
   useEffect(() => {
     const loadFutureEvents = async () => {
       try {
-        const today = new Date();
-        const futureEnd = new Date(today);
-        futureEnd.setMonth(futureEnd.getMonth() + 4);
+  const today = new Date();
+  const futureEnd = addMonths(new Date(today), 3);
 
         const dates: Date[] = [];
         const cur = new Date(today);
@@ -179,21 +178,25 @@ useEffect(() => {
       if (filters.street === 'All_streets') {
         const promises = streets.map(async (street) => {
           try {
-            const [hist, stats] = await Promise.all([
+            const [hist, stats, pred] = await Promise.all([
               pedestrianAPI.getHistoricalData(street, startDate, endDate),
               pedestrianAPI.getStatistics(street, startDate, endDate),
+              pedestrianAPI.getPredictionData(street, startDate, endDate),
             ]);
-            return { hist, stats };
+            return { hist, stats, pred };
           } catch {
-            return { hist: null, stats: null };
+            return { hist: null, stats: null, pred: null };
           }
         });
 
         const results = await Promise.all(promises);
 
-        results.forEach(({ hist, stats }) => {
+        results.forEach(({ hist, stats, pred }) => {
           if (hist?.data && Array.isArray(hist.data)) {
             combinedData.push(...hist.data);
+          }
+          if (pred?.predictions && Array.isArray(pred.predictions)) {
+            predictionData.push(...pred.predictions);
           }
           if (stats) {
             combinedStats.totalPedestrians += stats.totalPedestrians ?? 0;
@@ -274,17 +277,16 @@ useEffect(() => {
   loadData();
 }, [filters, streets]);
 
-  // Calendar events loader
+  // Calendar events loader: last 6 months to next 3 months
   const loadCalendarEvents = async () => {
-    const { start, end } = filters.dateRange;
-
-    // Generate array of dates - extend 60 days into the past and future for comprehensive event coverage
-    const extendedStart = new Date(start.getTime() - 60 * 24 * 60 * 60 * 1000);
-    const extendedEnd = new Date(Math.max(end.getTime(), start.getTime() + 60 * 24 * 60 * 60 * 1000));
-    
+    const today = new Date();
+    const startWindow = subMonths(new Date(today), 6);
+    const endWindow = addMonths(new Date(today), 3);
     const dates: Date[] = [];
-    const currentDate = new Date(extendedStart);
-    while (currentDate <= extendedEnd) {
+    const currentDate = new Date(startWindow);
+    currentDate.setHours(0, 0, 0, 0);
+    endWindow.setHours(0, 0, 0, 0);
+    while (currentDate <= endWindow) {
       dates.push(new Date(currentDate));
       currentDate.setDate(currentDate.getDate() + 1);
     }
@@ -344,6 +346,7 @@ useEffect(() => {
     });
 
     const allEvents = (await Promise.all(promises)).flat();
+    allEvents.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
     setCalendarEvents(allEvents);
   };
 
@@ -546,46 +549,44 @@ useEffect(() => {
             </div>
 
             {/* Main Content */}
-            <div className="lg:col-span-4 space-y-6">
-              {/* Statistics Cards */}
-              <StatisticsCards
-                statistics={statistics}
-                loading={loading}
-                street={filters.street}
-                currentWeather={currentWeather}
-                showWeather={filters.dateRange.type === 'day'}
+            <div className="lg:col-span-4 space-y-6 h-full overflow-y-auto">
+              <StatisticsCards 
+                statistics={statistics} 
+                loading={loading} 
+                street={filters.street} 
+                dateRange={filters.dateRange}
+                hourlyData={hourlyData}
+                hourlyPredictions={hourlyPredictions}
+                streets={streets}
               />
 
-              <div className="space-y-6">
-                <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-                  <div className="xl:col-span-2">
-                    <DataVisualization
-                      hourlyData={hourlyData}
-                      dailyData={dailyData}
-                      hourlyPredictions={hourlyPredictions}
-                      dailyPredictions={dailyPredictions}
-                      loading={loading}
-                      dateRange={filters.dateRange}
-                      comparisonSeries={comparisonSeries}
+              <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+                <div className="xl:col-span-2 space-y-6">
+                  <DataVisualization
+                    hourlyData={hourlyData}
+                    dailyData={dailyData}
+                    hourlyPredictions={hourlyPredictions}
+                    dailyPredictions={dailyPredictions}
+                    loading={loading}
+                    dateRange={filters.dateRange}
+                    comparisonSeries={comparisonSeries}
                     streetTotals={streetTotals}
                   />
+                  
+                  <HeatmapVisualization
+                    hourlyData={hourlyData}
+                    hourlyPredictions={hourlyPredictions}
+                    loading={loading}
+                    street={filters.street}
+                    dateRange={filters.dateRange}
+                  />
+                </div>
 
-                    {/* Heatmap placed directly under the data visualization, matching its width */}
-                    <div className="mt-4">
-                      <HeatmapVisualization
-                        hourlyData={hourlyData}
-                        loading={loading}
-                        street={filters.street}
-                        dateRange={filters.dateRange}
-                      />
-                    </div>
-                  </div>
-  
-                  <div className="xl:col-span-1">
-                    <CalendarComponent
-                      events={calendarEvents}
-                      loading={loading}
-                      futureEvents={futureEvents}
+                <div className="xl:col-span-1">
+                  <CalendarComponent
+                    events={calendarEvents}
+                    loading={loading}
+                    futureEvents={futureEvents}
                     dateRange={filters.dateRange}
                     />
                   </div>
@@ -595,6 +596,5 @@ useEffect(() => {
           </div>
         </div>
       </div>
-    </div>
   );
 }
