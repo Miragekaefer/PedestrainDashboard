@@ -130,6 +130,14 @@ export function DateFilter({ dateRange, onDateRangeChange }: DateFilterProps) {
             We only provide forecast data for up to 8 days in advance.
           </div>
         )}
+        {/* Show info if week/month selection exceeds forecast horizon */}
+        {(dateRange.type === 'week' || dateRange.type === 'month') && differenceInCalendarDays(dateRange.end, new Date()) > 8 && (
+          <div className="text-xs font-semibold mt-1 bg-red-500/20 text-red-600 dark:text-red-400 rounded px-2 py-1">
+            {differenceInCalendarDays(dateRange.start, new Date()) > 8
+              ? 'We only provide forecast data for up to 8 days in advance.'
+              : 'We only provide forecast data for up to 8 days in advance. The forecast for this period is incomplete.'}
+          </div>
+        )}
       </div>
 
       {/* Current Selection Info */}
