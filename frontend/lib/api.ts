@@ -211,7 +211,14 @@ class PedestrianAPI {
         acc[date] = { total: 0, hours: 0, tempSum: 0, tempCount: 0, condCounts: {} as Record<string, number> };
       }
       acc[date].total += item.n_pedestrians;
-      acc[date].hours += 1;
+      if (item.temperature !== null && item.temperature !== undefined && !Number.isNaN(item.temperature)) {
+        acc[date].tempSum += item.temperature;
+        acc[date].tempCount += 1;
+      }
+
+      if (item.weather_condition) {
+        acc[date].condCounts[item.weather_condition] = (acc[date].condCounts[item.weather_condition] || 0) + 1;
+      }
 
       if (item.temperature !== null && item.temperature !== undefined && !Number.isNaN(item.temperature)) {
         acc[date].tempSum += item.temperature as number;
@@ -247,6 +254,13 @@ class PedestrianAPI {
         weather_condition: topCondition,
       };
     });
+  }
+
+  // Add this helper function to get the most frequent weather condition
+  private getMostFrequent(arr: string[]): string {
+    return arr.sort((a,b) =>
+      arr.filter(v => v === a).length - arr.filter(v => v === b).length
+    ).pop() || '';
   }
 }
 

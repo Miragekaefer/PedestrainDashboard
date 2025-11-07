@@ -2,6 +2,18 @@
 
 import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+function getPeakHourRange(peakHour: number) {
+  // Returns a string like "16:00–18:00 Uhr" for a given peak hour (e.g., 16)
+  const start = peakHour.toString().padStart(2, '0') + ':00';
+  const end = (peakHour + 2).toString().padStart(2, '0') + ':00';
+  return `${start}–${end} Uhr`;
+}
+
+function getPercentChange(today: number, yesterday: number) {
+  if (yesterday === 0) return null;
+  const percent = ((today - yesterday) / yesterday) * 100;
+  return percent;
+}
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { TrendingUp, MapPin } from 'lucide-react';
@@ -11,9 +23,10 @@ import { StreetFilter } from './filters/street-filter';
 import { DateFilter } from './filters/date-filter';
 import { CalendarComponent } from './calendar/calendar-component';
 import { DataVisualization } from './charts/data-visualization';
+import { HeatmapVisualization } from './charts/heatmap-visualization';
 import { StatisticsCards } from './statistics/statistics-cards';
 import { ThemeToggle } from './theme-toggle';
-import { eachDayOfInterval, format, isAfter } from 'date-fns';
+import { eachDayOfInterval, format, isAfter, addMonths, subMonths } from 'date-fns';
 
 export function Dashboard() {
   const [filters, setFilters] = useState<DashboardFilters>({
@@ -63,9 +76,8 @@ export function Dashboard() {
   useEffect(() => {
     const loadFutureEvents = async () => {
       try {
-        const today = new Date();
-        const futureEnd = new Date(today);
-        futureEnd.setMonth(futureEnd.getMonth() + 4);
+  const today = new Date();
+  const futureEnd = addMonths(new Date(today), 3);
 
         const dates: Date[] = [];
         const cur = new Date(today);
@@ -171,21 +183,25 @@ useEffect(() => {
       if (filters.street === 'All_streets') {
         const promises = streets.map(async (street) => {
           try {
-            const [hist, stats] = await Promise.all([
+            const [hist, stats, pred] = await Promise.all([
               pedestrianAPI.getHistoricalData(street, startDate, endDate),
               pedestrianAPI.getStatistics(street, startDate, endDate),
+              pedestrianAPI.getPredictionData(street, startDate, endDate),
             ]);
-            return { hist, stats };
+            return { hist, stats, pred };
           } catch {
-            return { hist: null, stats: null };
+            return { hist: null, stats: null, pred: null };
           }
         });
 
         const results = await Promise.all(promises);
 
-        results.forEach(({ hist, stats }) => {
+        results.forEach(({ hist, stats, pred }) => {
           if (hist?.data && Array.isArray(hist.data)) {
             combinedData.push(...hist.data);
+          }
+          if (pred?.predictions && Array.isArray(pred.predictions)) {
+            predictionData.push(...pred.predictions);
           }
           if (stats) {
             combinedStats.totalPedestrians += stats.totalPedestrians ?? 0;
@@ -215,7 +231,7 @@ useEffect(() => {
       // ✅ Always defined safely
 // Transform data
       const hourlyChartData = pedestrianAPI.transformToHourlyData(combinedData ?? []);
-      const dailyChartData = pedestrianAPI.transformToDailyData(combinedData ?? []);
+      const dailyChartData = pedestrianAPI.transformToDailyData(combinedData ?? []) as DailyDataPoint[];
       const hourlyPredictionData = pedestrianAPI.transformToHourlyData(predictionData ?? []);
       const dailyPredictionData = pedestrianAPI.transformToDailyData(predictionData ?? []);
 
@@ -266,6 +282,35 @@ useEffect(() => {
       setHourlyData(hourlyChartData);
       setDailyData(fillDailyData(mergedDaily, filters.dateRange.start, filters.dateRange.end));
       setHourlyPredictions(hourlyPredictionData);
+        // Determine representative/current weather only when a single day is selected
+        try {
+          if (filters.dateRange.type === 'day') {
+            const targetDate = startDate; // YYYY-MM-DD from filters
+            const dayRecords = dailyChartData.filter(r => r.date === targetDate);
+            if (dayRecords && dayRecords.length > 0) {
+              // average temperature for the day (if available)
+              const avgTemp = dayRecords.reduce((a, b) => a + (b.temperature || 0), 0) / dayRecords.length;
+              // most frequent weather condition
+              const conds = dayRecords.map(d => d.weather_condition).filter(Boolean) as string[];
+              let mode: string | undefined = undefined;
+              if (conds.length > 0) {
+                const counts: Record<string, number> = {};
+                conds.forEach(c => { counts[c] = (counts[c] || 0) + 1; });
+                mode = Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0];
+              }
+
+              setCurrentWeather({ condition: mode, temperature: dayRecords[0].avgTemperature });
+            } else {
+              setCurrentWeather(null);
+            }
+          } else {
+            // for week/month selections we don't show specific weather
+            setCurrentWeather(null);
+          }
+        } catch (err) {
+          console.warn('Failed to compute current weather:', err);
+          setCurrentWeather(null);
+        }
       setDailyPredictions(dailyPredictionData);
       setStatistics(combinedStats);
       // compute weather for the selected day (if dateRange.type === 'day') otherwise use today's weather
@@ -569,12 +614,16 @@ useEffect(() => {
     computeLastMonthAvg();
   }, [filters.street]);
 
-  // Calendar events loader
+  // Calendar events loader: last 6 months to next 3 months
   const loadCalendarEvents = async () => {
-    const { start, end } = filters.dateRange;
+    const today = new Date();
+    const startWindow = subMonths(new Date(today), 6);
+    const endWindow = addMonths(new Date(today), 3);
     const dates: Date[] = [];
-    const currentDate = new Date(start);
-    while (currentDate <= end) {
+    const currentDate = new Date(startWindow);
+    currentDate.setHours(0, 0, 0, 0);
+    endWindow.setHours(0, 0, 0, 0);
+    while (currentDate <= endWindow) {
       dates.push(new Date(currentDate));
       currentDate.setDate(currentDate.getDate() + 1);
     }
@@ -634,6 +683,7 @@ useEffect(() => {
     });
 
     const allEvents = (await Promise.all(promises)).flat();
+    allEvents.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
     setCalendarEvents(allEvents);
   };
 
@@ -697,7 +747,7 @@ useEffect(() => {
   }
 
   return (
-    <div className="h-screen flex flex-col bg-gray-50 dark:bg-gray-900">
+    <div className="min-h-screen flex flex-col bg-gray-50 dark:bg-gray-900">
       {/* Header */}
       <header className="bg-white dark:bg-gray-800 shadow-sm border-b dark:border-gray-700 flex-shrink-0">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -717,8 +767,9 @@ useEffect(() => {
         </div>
       </header>
 
-      <div className="flex-1 overflow-hidden">
+      <div className="flex-1 overflow-y-auto">
         <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-6 h-full">
+          </div>
           <div className="grid grid-cols-1 lg:grid-cols-5 gap-6 h-full">
             {/* Full-width Recommendations - compact */}
             <div className="lg:col-span-5">
@@ -755,8 +806,8 @@ useEffect(() => {
               </Card>
             </div>
             {/* Sidebar - Filters */}
-            <div className="lg:col-span-1 h-full overflow-y-auto">
-              <Card className="h-full flex flex-col">
+            <div className="lg:col-span-1">
+              <Card className="sticky top-0">
                 <CardHeader className="flex-shrink-0">
                   <CardTitle className="flex items-center space-x-2">
                     <MapPin className="h-5 w-5" />
@@ -813,10 +864,14 @@ useEffect(() => {
                 currentWeather={currentWeather}
                 viewType={filters.dateRange.type}
                 weatherAvailable={weatherAvailable}
+                dateRange={filters.dateRange}
+                hourlyData={hourlyData}
+                hourlyPredictions={hourlyPredictions}
+                streets={streets}
               />
 
               <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-                <div className="xl:col-span-2">
+                <div className="xl:col-span-2 space-y-6">
                   <DataVisualization
                     hourlyData={hourlyData}
                     dailyData={dailyData}
@@ -827,6 +882,14 @@ useEffect(() => {
                     comparisonSeries={comparisonSeries}
                     streetTotals={streetTotals}
                   />
+                  
+                  <HeatmapVisualization
+                    hourlyData={hourlyData}
+                    hourlyPredictions={hourlyPredictions}
+                    loading={loading}
+                    street={filters.street}
+                    dateRange={filters.dateRange}
+                  />
                 </div>
 
                 <div className="xl:col-span-1">
@@ -835,13 +898,12 @@ useEffect(() => {
                     loading={loading}
                     futureEvents={futureEvents}
                     dateRange={filters.dateRange}
-                  />
+                    />
+                  </div>
                 </div>
               </div>
             </div>
           </div>
         </div>
-      </div>
-    </div>
   );
 }
