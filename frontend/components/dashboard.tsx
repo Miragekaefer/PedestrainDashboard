@@ -299,7 +299,7 @@ useEffect(() => {
                 mode = Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0];
               }
 
-              setCurrentWeather({ condition: mode, temperature: dayRecords[0].avgTemperature });
+              setCurrentWeather({ condition: mode, temperature: dayRecords[0].temperature });
             } else {
               setCurrentWeather(null);
             }
