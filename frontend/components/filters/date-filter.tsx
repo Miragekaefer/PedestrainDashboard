@@ -97,9 +97,10 @@ export function DateFilter({ dateRange, onDateRangeChange }: DateFilterProps) {
         </SelectContent>
       </Select>
 
+
       {/* Date Picker for Custom Selection */}
       <div className="space-y-2">
-  <label className="text-sm text-gray-600 dark:text-gray-400">{(dateRange.type === 'week' || dateRange.type === 'month') ? 'Select starting date:' : 'Select date:'}</label>
+        <label className="text-sm text-gray-600 dark:text-gray-400">{(dateRange.type === 'week' || dateRange.type === 'month') ? 'Select starting date:' : 'Select date:'}</label>
         <Popover open={isCalendarOpen} onOpenChange={setIsCalendarOpen}>
           <PopoverTrigger asChild>
             <Button
@@ -123,6 +124,12 @@ export function DateFilter({ dateRange, onDateRangeChange }: DateFilterProps) {
             />
           </PopoverContent>
         </Popover>
+        {/* Show info if selected day is more than 8 days in the future */}
+        {dateRange.type === 'day' && differenceInCalendarDays(dateRange.start, new Date()) > 8 && (
+          <div className="text-xs font-semibold mt-1 bg-red-500/20 text-red-600 dark:text-red-400 rounded px-2 py-1">
+            We only provide forecast data for up to 8 days in advance.
+          </div>
+        )}
       </div>
 
       {/* Current Selection Info */}
