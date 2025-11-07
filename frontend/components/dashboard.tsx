@@ -410,91 +410,6 @@ useEffect(() => {
 
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-6 h-full">
-          {/* Optimal Opening / Staffing Time Recommendation */}
-          <div className="mb-6 space-y-4">
-            <Card>
-              <CardHeader>
-                <CardTitle>Optimal Opening / Staffing Time</CardTitle>
-              </CardHeader>
-              <CardContent>
-                {statistics && typeof statistics.peakHour === 'number' && (
-                  <div className="text-gray-800 dark:text-gray-100">
-                    <span>
-                      Increased visitor numbers are expected between <b>{getPeakHourRange(statistics.peakHour)}</b>. Consider scheduling additional staff or special offers during this period.
-                    </span>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-
-            {/* Dynamic Promotion Timing Recommendation (EN) */}
-            {(() => {
-              // Use the selected filter start date as reference
-              const filterStart = filters.dateRange?.start ? new Date(filters.dateRange.start) : new Date();
-              const oneWeek = 7 * 24 * 60 * 60 * 1000;
-              const oneMonth = 30 * 24 * 60 * 60 * 1000;
-              let nextEvent = null;
-              let minDiff = Infinity;
-              for (const event of calendarEvents) {
-                const diff = new Date(event.date).getTime() - filterStart.getTime();
-                if (diff >= 0 && diff < minDiff && (diff < oneWeek || (!nextEvent && diff < oneMonth))) {
-                  nextEvent = event;
-                  minDiff = diff;
-                }
-              }
-              if (!nextEvent) return null;
-              // Format event date (e.g. Friday)
-              const eventDate = new Date(nextEvent.date);
-              const weekday = eventDate.toLocaleDateString('en-US', { weekday: 'long' });
-              // Suggest campaign the day before
-              const campaignDate = new Date(eventDate);
-              campaignDate.setDate(eventDate.getDate() - 1);
-              const campaignWeekday = campaignDate.toLocaleDateString('en-US', { weekday: 'long' });
-              // Example impact (static for now)
-              const impact = 25;
-              return (
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Promotion Timing</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="text-gray-800 dark:text-gray-100 space-y-2">
-                      <div className="pl-2 border-l-2 border-gray-300 dark:border-gray-700">
-                        <span className="block">{`On ${weekday}, ${nextEvent.name ? nextEvent.name : 'an event'} takes place, and visitor numbers are expected to increase by `}<b>{impact}%</b>{`. Start your social media campaign on ${campaignWeekday} evening.`}</span>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              );
-            })()}
-
-            {/* Customer Flow Direction Insight */}
-            {statistics && typeof statistics.directionRatio === 'number' && (
-              <Card>
-                <CardHeader>
-                  <CardTitle>Customer Flow Direction Insight</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-gray-800 dark:text-gray-100 space-y-2">
-                    <div>
-                      <span className="italic">Uses Direction Flow</span>
-                    </div>
-                    <div className="pl-2 border-l-2 border-gray-300 dark:border-gray-700">
-                      <span className="block">
-                        <b>{Math.round(statistics.directionRatio)}%</b> of pedestrians are moving towards the city center.
-                      </span>
-                    </div>
-                    <div className="text-sm text-gray-600 dark:text-gray-400 pl-2 mt-1">
-                      {statistics.directionRatio > 60 
-                        ? "High inbound traffic – ideal for promotions targeting visitors entering the area."
-                        : statistics.directionRatio < 40
-                        ? "High outbound traffic – consider positioning offers for people leaving the area."
-                        : "Balanced traffic flow in both directions."}
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            )}
           </div>
           <div className="grid grid-cols-1 lg:grid-cols-5 gap-6 h-full">
             {/* Sidebar - Filters */}
@@ -595,6 +510,5 @@ useEffect(() => {
             </div>
           </div>
         </div>
-      </div>
   );
 }
