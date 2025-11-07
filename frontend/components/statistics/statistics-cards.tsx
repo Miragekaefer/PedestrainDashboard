@@ -1008,9 +1008,10 @@ export function StatisticsCards({ statistics, loading, street, dateRange, hourly
                     }
                     return cond ? `Mostly ${cond}` : 'Unknown';
                   })()}
-                </div>
+
               </div>
             </div>
+          </div>
           ) : null)}
         </CardContent>
       </Card>
