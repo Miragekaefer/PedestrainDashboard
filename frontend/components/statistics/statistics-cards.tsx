@@ -813,7 +813,7 @@ export function StatisticsCards({ statistics, loading, street, dateRange, hourly
         <CardContent>
           <div className="text-2xl font-bold">{formatNumber(totalWithPredictions)}</div>
           <p className="text-xs text-muted-foreground">
-            {street}
+            {street === 'All_streets' ? 'All Streets' : street}
           </p>
           
           {/* Show comparisons for day/week/month filters */}
