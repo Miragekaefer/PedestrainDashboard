@@ -1,7 +1,6 @@
 'use client';
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { Users, TrendingUp, Clock, Activity, TrendingDown, Minus } from 'lucide-react';
 import { StatisticsData, DashboardFilters, HourlyDataPoint } from '@/lib/types';
 import { useState, useEffect, useMemo } from 'react';
@@ -12,13 +11,16 @@ interface StatisticsCardsProps {
   statistics: StatisticsData | null;
   loading: boolean;
   street: string;
+  currentWeather?: { condition?: string | string[]; temperature?: number; minTemp?: number; maxTemp?: number } | null;
+  viewType?: 'day' | 'week' | 'month';
+  weatherAvailable?: boolean;
   dateRange?: DashboardFilters['dateRange'];
   hourlyData?: HourlyDataPoint[];
   hourlyPredictions?: HourlyDataPoint[];
   streets?: string[]; // List of all streets for All_streets comparison
 }
 
-export function StatisticsCards({ statistics, loading, street, dateRange, hourlyData = [], hourlyPredictions = [], streets = [] }: StatisticsCardsProps) {
+export function StatisticsCards({ statistics, loading, street, dateRange, hourlyData = [], hourlyPredictions = [], streets = [], currentWeather, viewType, weatherAvailable }: StatisticsCardsProps) {
   const [lastWeekTotal, setLastWeekTotal] = useState<number | null>(null);
   const [lastYearTotal, setLastYearTotal] = useState<number | null>(null);
   const [loadingComparisons, setLoadingComparisons] = useState(false);
@@ -748,6 +750,7 @@ export function StatisticsCards({ statistics, loading, street, dateRange, hourly
     );
   }
 
+  // Weather impact display removed per request
   const getWeatherImpactColor = (impact: string) => {
     switch (impact) {
       case 'high': return 'destructive';
@@ -983,14 +986,33 @@ export function StatisticsCards({ statistics, loading, street, dateRange, hourly
           <Activity className="h-4 w-4 text-muted-foreground" />
         </CardHeader>
         <CardContent>
+          {viewType === 'month' ? null : (currentWeather ? (
+            <div className="mb-2">
+              <div className="flex items-center space-x-3">
+                <div className="text-sm font-medium">
+                  {currentWeather.minTemp !== undefined && currentWeather.maxTemp !== undefined
+                    ? (currentWeather.minTemp === currentWeather.maxTemp
+                        ? `${Math.round(currentWeather.minTemp)}°C`
+                        : `${Math.round(currentWeather.minTemp)}–${Math.round(currentWeather.maxTemp)}°C`)
+                    : (currentWeather.temperature !== undefined
+                        ? `${Math.round(currentWeather.temperature)}°C`
+                        : '—')}
+                </div>
+                <div className="text-xs text-muted-foreground capitalize">
+                  {(() => {
+                    const cond = currentWeather.condition;
+                    if (Array.isArray(cond)) {
+                      if (cond.length === 1) return `Mostly ${cond[0]}`;
+                      if (cond.length >= 2) return `Mostly ${cond[0]} and ${cond[1]}`;
+                      return 'Unknown';
+                    }
+                    return cond ? `Mostly ${cond}` : 'Unknown';
+                  })()}
 
-          <Badge variant={getWeatherImpactColor(statistics.weatherImpact)} className={`mb-2 ${getWeatherImpactBgClass(statistics.weatherImpact)}`}>
-            {getWeatherImpactText(statistics.weatherImpact)}
-          </Badge>
-
-          <p className="text-xs text-muted-foreground">
-            on pedestrian count
-          </p>
+              </div>
+            </div>
+          </div>
+          ) : null)}
         </CardContent>
       </Card>
     </div>

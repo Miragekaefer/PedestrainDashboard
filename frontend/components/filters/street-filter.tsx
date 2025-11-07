@@ -15,7 +15,7 @@ export function StreetFilter({ streets, selectedStreet, onStreetChange }: Street
 
   return (
     <div className="space-y-2">
-      <label className="text-sm font-medium text-gray-700 flex items-center space-x-2">
+      <label className="text-sm font-medium text-gray-700 dark:text-gray-300 flex items-center space-x-2">
         <MapPin className="h-4 w-4" />
         <span>Street Location</span>
       </label>
