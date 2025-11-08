@@ -18,7 +18,7 @@ import {
   Cell,
   ReferenceDot,
 } from 'recharts';
-import { format, parseISO } from 'date-fns';
+import { format, parseISO , addDays, subDays, addWeeks, subWeeks, addMonths, subMonths, addYears, subYears } from "date-fns";
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 
@@ -61,6 +61,14 @@ function buildCombinedHourly(actual: HourlyDataPoint[] = [], predicted: HourlyDa
       actual: d.actual ?? 0,
       predicted: d.predicted == null ? null : d.predicted,
     }));
+}
+
+function shiftDailySeries(data: DailyDataPoint[], shiftFn: (date: Date) => Date, label: string, key: string) {
+  return data.map(d => ({
+    date: format(shiftFn(parseISO(d.date)), "yyyy-MM-dd"),
+    [key]: d.total,
+    name: label,
+  }));
 }
 
 function buildCombinedDaily(actual: DailyDataPoint[] = [], predicted: DailyDataPoint[] = []) {
@@ -158,8 +166,7 @@ export const DataVisualization: React.FC<Props> = ({
   dailyPredictions = [],
   loading,
   dateRange,
-  streetTotals,
-  comparisonSeries = [],
+  streetTotals
 }) => {
   const [view, setView] = useState<'hourly' | 'daily' | 'comparison' | 'overview'>('hourly');
 
@@ -168,6 +175,41 @@ export const DataVisualization: React.FC<Props> = ({
 
   const dailyAverages = useMemo(() => computeDailyAverages(combinedDaily), [combinedDaily]);
 
+  const comparisonSeries = useMemo(() => {
+    if (!dailyData || dailyData.length === 0) return [];
+
+    return [
+      {
+        key: "yesterday",
+        name: "Yesterday",
+        data: shiftDailySeries(dailyData, (d) => subDays(d, 1), "Yesterday", "yesterday"),
+        color: "#fb923c",
+        opacity: 0.45,
+      },
+      {
+        key: "lastWeek",
+        name: "Same Day Last Week",
+        data: shiftDailySeries(dailyData, (d) => subWeeks(d, 1), "Last Week", "lastWeek"),
+        color: "#0ea5e9",
+        opacity: 0.45,
+      },
+      {
+        key: "lastMonth",
+        name: "Same Day Last Month",
+        data: shiftDailySeries(dailyData, (d) => subMonths(d, 1), "Last Month", "lastMonth"),
+        color: "#16a34a",
+        opacity: 0.45,
+      },
+      {
+        key: "lastYear",
+        name: "Same Day Last Year",
+        data: shiftDailySeries(dailyData, (d) => subYears(d, 1), "Last Year", "lastYear"),
+        color: "#a855f7",
+        opacity: 0.45,
+      },
+    ];
+  }, [dailyData]);
+  
   const peakThreshold = useMemo(() => {
     if (!combinedHourly || combinedHourly.length === 0) return 0;
     const values = combinedHourly.map(d => d.actual);
@@ -309,8 +351,15 @@ export const DataVisualization: React.FC<Props> = ({
                   />
 
                   {/* optional comparison series — provided by dashboard if available */}
-                  {comparisonSeries?.map((s, idx) => (
-                    <Bar key={s.key} dataKey={s.key} name={s.name} barSize={18} fill={s.color ?? overlayColors[idx % overlayColors.length]} opacity={s.opacity ?? 0.35} />
+                  {comparisonSeries.map((s, idx) => (
+                    <Bar
+                      key={s.key}
+                      dataKey={s.key}
+                      name={s.name}
+                      barSize={14}
+                      fill={s.color}
+                      opacity={s.opacity}
+                    />
                   ))}
                 </ComposedChart>
               </ResponsiveContainer>

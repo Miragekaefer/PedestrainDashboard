@@ -118,9 +118,6 @@ export function CalendarComponent({ events, futureEvents, loading, dateRange }: 
       </CardHeader>
 
       <CardContent className="space-y-6">
-        {/* Next Upcoming Event Box — use futureEvents (independent), fallback to calendar events */}
-        <NextEvent events={futureEvents && futureEvents.length > 0 ? futureEvents : events} />
-
         {/* Legend */}
         <div className="space-y-2">
           <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300">Legend</h4>
