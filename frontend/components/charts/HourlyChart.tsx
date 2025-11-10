@@ -25,12 +25,29 @@ interface HourlyChartProps {
 export function HourlyChart({ hourlyData, dailyWithPeaks, dateRange }: HourlyChartProps) {
   const isDaily = dateRange.type === 'day';
 
-  // For "day" view → 24 hourly points
+  // For "day" view → 24 hourly points (filter to the selected date and fill missing hours)
   const hourlyChartData = isDaily
-    ? hourlyData.map((d: any) => ({
-        hour: d.hour ?? new Date(d.timestamp || d.date).getHours(),
-        total: d.total,
-      }))
+    ? (() => {
+        const targetDate = dateRange && dateRange.start ? format(dateRange.start, 'yyyy-MM-dd') : format(new Date(), 'yyyy-MM-dd');
+
+        // build map hour -> total (summing if multiple entries exist)
+        const map = new Map<number, number>();
+        (hourlyData || []).forEach((d: any) => {
+          // prefer explicit date/hour fields, else fall back to timestamp
+          const dDate = d.date || (d.timestamp ? format(new Date(d.timestamp), 'yyyy-MM-dd') : null);
+          if (dDate !== targetDate) return;
+          const hour = typeof d.hour === 'number' ? d.hour : new Date(d.timestamp || dDate).getHours();
+          const prev = map.get(hour) ?? 0;
+          map.set(hour, prev + (Number(d.total ?? 0)));
+        });
+
+        const arr: { hour: number; total: number }[] = [];
+        for (let h = 0; h < 24; h++) {
+          arr.push({ hour: h, total: map.get(h) ?? 0 });
+        }
+
+        return arr;
+      })()
     : [];
 
   // For "week/month" → one point per day from dailyWithPeaks

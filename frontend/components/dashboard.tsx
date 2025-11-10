@@ -881,6 +881,7 @@ useEffect(() => {
                     dateRange={filters.dateRange}
                     comparisonSeries={comparisonSeries}
                     streetTotals={streetTotals}
+                    street={filters.street}
                   />
                   
                   <HeatmapVisualization
