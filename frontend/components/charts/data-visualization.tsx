@@ -179,7 +179,7 @@ export const DataVisualization: React.FC<Props> = ({
   streetTotals,
   street
 }) => {
-  const [view, setView] = useState<'hourly' | 'daily' | 'comparison' | 'overview'>('hourly');
+  const [view, setView] = useState<'hourly' | 'daily' | 'comparison'>('hourly');
 
   const combinedHourly = useMemo(() => buildCombinedHourly(hourlyData ?? [], hourlyPredictions ?? []), [hourlyData, hourlyPredictions]);
   const combinedDaily = useMemo(() => buildCombinedDaily(dailyData ?? [], dailyPredictions ?? []), [dailyData, dailyPredictions]);
@@ -601,7 +601,7 @@ export const DataVisualization: React.FC<Props> = ({
             <Button onClick={() => setView('hourly')}>Hourly</Button>
             <Button onClick={() => setView('daily')}>Daily</Button>
             <Button onClick={() => setView('comparison')}>Comparison</Button>
-            <Button onClick={() => setView('overview')}>Overview</Button>
+            {/* <Button onClick={() => setView('overview')}>Overview</Button> */}
           </div>
         </CardAction>
       
@@ -885,28 +885,7 @@ export const DataVisualization: React.FC<Props> = ({
               transition={{ duration: 0.3 }}
               className="h-full"
             >
-              {/* Overview: either pie chart for all streets, or stacked small multiples */}
-              {streetTotals && streetTotals.length > 0 && (
-                <ResponsiveContainer width="100%" height={350}>
-                  <PieChart>
-                    <Pie
-                      data={streetTotals}
-                      dataKey="total"
-                      nameKey="street"
-                      outerRadius={120}
-                      label={(entry) => `${entry.street}`}
-                    >
-                      {streetTotals.map((entry, index) => (
-                        <Cell
-                          key={`cell-${index}`}
-                          fill={`hsl(${(index * 40) % 360}, 70%, 60%)`}
-                        />
-                      ))}
-                    </Pie>
-                    <Tooltip />
-                  </PieChart>
-                </ResponsiveContainer>           
-              )}
+
             </motion.div>
           )}
         </AnimatePresence>

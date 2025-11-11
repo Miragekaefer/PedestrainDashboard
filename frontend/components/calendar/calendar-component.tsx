@@ -7,7 +7,7 @@ import { Calendar } from '@/components/ui/calendar';
 import { CalendarIcon, Music, Gift, GraduationCap, CalendarDays } from 'lucide-react';
 import { format, isSameDay, isAfter } from 'date-fns';
 import { CalendarEvent, DashboardFilters } from '@/lib/types';
-import { NextEvent } from '@/components/calendar/nextEvent';
+
 
 interface CalendarComponentProps {
   events: CalendarEvent[];                
