@@ -180,6 +180,14 @@ export const DataVisualization: React.FC<Props> = ({
   street
 }) => {
   const [view, setView] = useState<'hourly' | 'daily' | 'comparison'>('hourly');
+  
+  // If the dateRange becomes a single day, the 'daily' view is not applicable —
+  // force the view to 'hourly' and disable the Daily button.
+  useEffect(() => {
+    if (dateRange && dateRange.type === 'day' && view === 'daily') {
+      setView('hourly');
+    }
+  }, [dateRange, view]);
 
   const combinedHourly = useMemo(() => buildCombinedHourly(hourlyData ?? [], hourlyPredictions ?? []), [hourlyData, hourlyPredictions]);
   const combinedDaily = useMemo(() => buildCombinedDaily(dailyData ?? [], dailyPredictions ?? []), [dailyData, dailyPredictions]);
@@ -234,7 +242,7 @@ export const DataVisualization: React.FC<Props> = ({
   const comparisonSeries = useMemo(() => {
     if (!dailyData || dailyData.length === 0) return [];
 
-    return [
+    const base = [
       {
         key: "yesterday",
         name: "Yesterday",
@@ -264,7 +272,14 @@ export const DataVisualization: React.FC<Props> = ({
         opacity: 0.45,
       },
     ];
-  }, [dailyData]);
+
+    // For month filter + comparison view we should not include the "Same Days Last Week" series
+    if (dateRange && dateRange.type === 'month') {
+      return base.filter(s => s.key !== 'lastWeek');
+    }
+
+    return base;
+  }, [dailyData, dateRange]);
   
   const peakThreshold = useMemo(() => {
     if (!combinedHourly || combinedHourly.length === 0) return 0;
@@ -584,6 +599,11 @@ export const DataVisualization: React.FC<Props> = ({
       };
 
       Object.entries(prevs).forEach(([key, dateStr]) => {
+        // For month filter + comparison view we intentionally omit the 'lastWeek' comparison
+        if (dateRange && dateRange.type === 'month' && key === 'lastWeek') {
+          row[key] = null;
+          return;
+        }
         const found = lookup.get(dateStr);
         row[key] = found ? (found.actual ?? null) : null;
       });
@@ -599,7 +619,14 @@ export const DataVisualization: React.FC<Props> = ({
         <CardAction>
           <div className="flex space-x-2">
             <Button onClick={() => setView('hourly')}>Hourly</Button>
-            <Button onClick={() => setView('daily')}>Daily</Button>
+            <Button
+              onClick={() => setView('daily')}
+              disabled={!!(dateRange && dateRange.type === 'day')}
+              title={dateRange && dateRange.type === 'day' ? 'Daily view is unavailable when a single day is selected' : undefined}
+              aria-disabled={dateRange && dateRange.type === 'day'}
+            >
+              Daily
+            </Button>
             <Button onClick={() => setView('comparison')}>Comparison</Button>
             {/* <Button onClick={() => setView('overview')}>Overview</Button> */}
           </div>
@@ -636,6 +663,10 @@ export const DataVisualization: React.FC<Props> = ({
                       if (dateRange && dateRange.type === 'week') {
                         return `${format(date, 'EEE dd.MM')}`;
                       }
+                      // If a month is selected, show only the date (no hour)
+                      if (dateRange && dateRange.type === 'month') {
+                        return `${format(date, 'MMM dd')}`;
+                      }
                       return `${format(date, 'MMM dd')} ${String(date.getHours()).padStart(2, '0')}:00`;
                     }}
                     angle={-45}
@@ -643,7 +674,7 @@ export const DataVisualization: React.FC<Props> = ({
                     height={80}
                   />
                   <YAxis />
-                  <Legend verticalAlign="bottom" align="center" />
+                  {dateRange?.type !== 'month' && <Legend verticalAlign="bottom" align="center" />}
 
                   {/* Actual line with custom dots marking peaks - only render when actuals exist for the day */}
                   {hasActualsForDisplayedDay && (
@@ -703,10 +734,12 @@ export const DataVisualization: React.FC<Props> = ({
                   <XAxis dataKey="date" tickFormatter={(d) => format(parseISO(d), 'MMM dd')} />
                   <YAxis />
                   <Tooltip content={DailyTooltip} />
-                  {dateRange && dateRange.type === 'week' ? (
-                    <Legend verticalAlign="bottom" align="center" />
-                  ) : (
-                    <Legend />
+                  {dateRange?.type !== 'month' && (
+                    dateRange && dateRange.type === 'week' ? (
+                      <Legend verticalAlign="bottom" align="center" />
+                    ) : (
+                      <Legend />
+                    )
                   )}
 
                   {/* Main actual bar */}
@@ -734,13 +767,13 @@ export const DataVisualization: React.FC<Props> = ({
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -10 }}
               transition={{ duration: 0.3 }}
-              className="h-full"
+              className="h-full flex flex-col"
             >
               {/* Comparison view: if comparisonSeries provided, show them overlaid. Else show a message */}
               {comparisonSeries && comparisonSeries.length > 0 ? (
                 <>
                   {/* When a single day is selected, allow toggling legend series via checkboxes */}
-                  {dateRange && (dateRange.type === 'day' || dateRange.type === 'week') && (
+                  {dateRange && (dateRange.type === 'day' || dateRange.type === 'week' || dateRange.type === 'month') && (
                     <div className="mb-3 ml-4 flex flex-wrap gap-3 items-center">
                       {/* include the 'Selected' actual series */}
                       <label className="inline-flex items-center space-x-2 text-sm">
@@ -751,7 +784,7 @@ export const DataVisualization: React.FC<Props> = ({
                             setActiveComparisonKeys(prev => prev.includes('actual') ? prev.filter(k => k !== 'actual') : [...prev, 'actual']);
                           }}
                         />
-                        <span style={{ color: '#2563eb' }}>{dateRange.type === 'day' ? 'Selected Day' : 'Selected Week'}</span>
+                        <span style={{ color: '#2563eb' }}>{dateRange.type === 'day' ? 'Selected Day' : dateRange.type === 'week' ? 'Selected Week' : dateRange.type === 'month' ?'Selected Month' : ''}</span>
                       </label>
 
                       {comparisonSeries.map((s, idx) => (
@@ -793,8 +826,9 @@ export const DataVisualization: React.FC<Props> = ({
 
                   {dateRange && dateRange.type === 'day' ? (
                     comparisonChartType === 'line' ? (
-                      <ResponsiveContainer width="100%" height="100%">
-                        <LineChart data={combinedComparisonHourlyData}>
+                      <div className="flex-1">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <LineChart data={combinedComparisonHourlyData}>
                           <CartesianGrid strokeDasharray="3 3" />
                           <XAxis
                             dataKey="dateTime"
@@ -805,7 +839,6 @@ export const DataVisualization: React.FC<Props> = ({
                           />
                           <YAxis />
                           <Tooltip content={HourlyTooltip} shared={true} />
-                          <Legend />
 
                           {activeComparisonKeys.includes('actual') && (
                             <Line type="monotone" dataKey="actual" name="Selected Day" stroke="#2563eb" strokeWidth={2} dot={false} />
@@ -817,10 +850,12 @@ export const DataVisualization: React.FC<Props> = ({
                             ) : null
                           ))}
                         </LineChart>
-                      </ResponsiveContainer>
+                        </ResponsiveContainer>
+                      </div>
                     ) : (
-                      <ResponsiveContainer width="100%" height="100%">
-                        <ComposedChart data={combinedComparisonHourlyData}>
+                      <div className="flex-1">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <ComposedChart data={combinedComparisonHourlyData}>
                           <CartesianGrid strokeDasharray="3 3" />
                           <XAxis
                             dataKey="dateTime"
@@ -831,7 +866,6 @@ export const DataVisualization: React.FC<Props> = ({
                           />
                           <YAxis />
                           <Tooltip content={HourlyTooltip} shared={true} />
-                          <Legend />
 
                           {activeComparisonKeys.includes('actual') && (
                             <Bar dataKey="actual" name="Selected Day" barSize={12} fill="#2563eb" />
@@ -843,16 +877,17 @@ export const DataVisualization: React.FC<Props> = ({
                             ) : null
                           ))}
                         </ComposedChart>
-                      </ResponsiveContainer>
+                        </ResponsiveContainer>
+                      </div>
                     )
                   ) : (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <ComposedChart data={weeklyComparisonDailyData} barCategoryGap="20%" barGap={8}>
+                    <div className="flex-1">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <ComposedChart data={weeklyComparisonDailyData} barCategoryGap="20%" barGap={8}>
                         <CartesianGrid strokeDasharray="3 3" />
                         <XAxis dataKey="date" tickFormatter={(d) => format(parseISO(d), 'MMM dd')} />
                         <YAxis />
                         <Tooltip content={DailyTooltip} />
-                        <Legend />
 
                           {activeComparisonKeys.includes('actual') && (
                             <Bar dataKey="actual" name="Selected" barSize={16} fill="#2563eb" />
@@ -868,8 +903,9 @@ export const DataVisualization: React.FC<Props> = ({
                             <Bar key={s.key} dataKey={s.key} name={s.name} barSize={10} fill={s.color ?? overlayColors[idx % overlayColors.length]} opacity={s.opacity ?? 0.35} />
                           ) : null
                         ))}
-                      </ComposedChart>
-                    </ResponsiveContainer>
+                        </ComposedChart>
+                      </ResponsiveContainer>
+                    </div>
                   )}
                 </>
               ) : (

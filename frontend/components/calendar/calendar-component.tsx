@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Calendar } from '@/components/ui/calendar';
 import { CalendarIcon, Music, Gift, GraduationCap, CalendarDays } from 'lucide-react';
-import { format, isSameDay, isAfter } from 'date-fns';
+import { format, isSameDay, isAfter, subDays } from 'date-fns';
 import { CalendarEvent, DashboardFilters } from '@/lib/types';
 
 
@@ -34,17 +34,33 @@ export function CalendarComponent({ events, futureEvents, loading, dateRange }: 
     return acc;
   }, {} as Record<string, CalendarEvent[]>);
 
-  // Events for selected date
-  const selectedDateEvents = events.filter(
-    event => selectedDate && isSameDay(fixDate(event.date), selectedDate)
-  );
+  // Events for selected date. Use the same holiday shift (subtract one day)
+  // so the listed event matches the calendar marker for public holidays.
+  const selectedDateEvents = events.filter((event) => {
+    if (!selectedDate) return false;
+    const eventDate = event.type === 'holiday' ? subDays(fixDate(event.date), 1) : fixDate(event.date);
+    return isSameDay(eventDate, selectedDate);
+  });
 
   // Calendar modifiers
-  const holidayDates = events.filter(e => e.type === 'holiday').map(e => fixDate(e.date));
+  // Move public-holiday markers one day earlier (user requested)
+  const holidayDates = events
+    .filter(e => e.type === 'holiday')
+    .map(e => subDays(fixDate(e.date), 1));
   const schoolHolidayDates = events.filter(e => e.type === 'school_holiday').map(e => fixDate(e.date));
   const eventDates = events.filter(e => e.type === 'event').map(e => fixDate(e.date));
   const concertDates = events.filter(e => e.type === 'concert').map(e => fixDate(e.date));
-  const lectureDates = events.filter(e => e.type === 'lecture').map(e => fixDate(e.date));
+  let lectureDates = events.filter(e => e.type === 'lecture').map(e => fixDate(e.date));
+
+  // Prefer showing 'event' over 'lecture' on the calendar: if a date has an
+  // 'event', don't mark it as a 'lecture'. This ensures an event takes visual
+  // precedence when both occur on the same day.
+  try {
+    const eventDateKeys = new Set(eventDates.map(d => format(d, 'yyyy-MM-dd')));
+    lectureDates = lectureDates.filter(d => !eventDateKeys.has(format(d, 'yyyy-MM-dd')));
+  } catch (err) {
+    // If formatting fails for some reason, leave lectureDates unchanged.
+  }
 
   const modifiers = {
     holiday: holidayDates,

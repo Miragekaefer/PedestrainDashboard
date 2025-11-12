@@ -625,7 +625,7 @@ useEffect(() => {
     endWindow.setHours(0, 0, 0, 0);
     while (currentDate <= endWindow) {
       dates.push(new Date(currentDate));
-      currentDate.setDate(currentDate.getDate() + 1);
+      currentDate.setDate(currentDate.getDate()+1);
     }
 
     const promises = dates.map(async (date) => {
@@ -774,7 +774,7 @@ useEffect(() => {
           <div className="grid grid-cols-1 lg:grid-cols-5 gap-6 h-full">
             {/* Full-width Recommendations - compact */}
             <div className="lg:col-span-5">
-  <Card className="mb-0 border-l-4 border-blue-500 dark:border-blue-400">
+  <Card className="mb-0 border border-blue-500 dark:border-blue-400 rounded-md">
     <CardHeader className="py-1">
       <CardTitle className="flex items-center gap-1 text-base font-bold text-gray-900 dark:text-gray-100 mb-0">
         <TrendingUp className="w-5 h-5 text-blue-500 dark:text-blue-400" />
