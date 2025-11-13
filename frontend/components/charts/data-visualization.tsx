@@ -568,6 +568,8 @@ export const DataVisualization: React.FC<Props> = ({
         hour: h,
         dateTime: `${targetDate}T${String(h).padStart(2, '0')}:00`,
         actual: selectedEntry ? (selectedEntry.actual == null ? null : selectedEntry.actual) : null,
+        // include predicted values for the selected day (may be null)
+        predicted: selectedEntry ? (selectedEntry.predicted == null ? null : selectedEntry.predicted) : null,
         yesterday: getActualFor(yesterday, h),
         lastWeek: getActualFor(lastWeek, h),
         lastMonth: getActualFor(lastMonth, h),
@@ -843,6 +845,9 @@ export const DataVisualization: React.FC<Props> = ({
                           {activeComparisonKeys.includes('actual') && (
                             <Line type="monotone" dataKey="actual" name="Selected Day" stroke="#2563eb" strokeWidth={2} dot={false} />
                           )}
+                          {activeComparisonKeys.includes('predicted') && (
+                            <Line type="monotone" dataKey="predicted" name="Predicted" stroke="#f59e0b" strokeDasharray="5 5" strokeWidth={2} dot={false} />
+                          )}
 
                           {comparisonSeries.map((s, idx) => (
                             activeComparisonKeys.includes(s.key) ? (
@@ -869,6 +874,9 @@ export const DataVisualization: React.FC<Props> = ({
 
                           {activeComparisonKeys.includes('actual') && (
                             <Bar dataKey="actual" name="Selected Day" barSize={12} fill="#2563eb" />
+                          )}
+                          {activeComparisonKeys.includes('predicted') && (
+                            <Bar dataKey="predicted" name="Predicted" barSize={10} fill="#f59e0b" opacity={0.9} />
                           )}
 
                           {comparisonSeries.map((s, idx) => (
