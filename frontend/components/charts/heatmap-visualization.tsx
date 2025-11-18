@@ -9,8 +9,8 @@ interface HeatmapData {
   day: number;      // 0-6 for Sunday-Saturday
   hour: number;     // 0-23
   value: number;    // Average pedestrian count
+  isPrediction?: boolean;
 }
-
 
 import { DashboardFilters } from '@/lib/types';
 import { format, addDays, eachDayOfInterval } from 'date-fns';
@@ -63,14 +63,13 @@ export function HeatmapVisualization({ hourlyData, hourlyPredictions = [], loadi
       });
     }
 
-    // Initialize accumulator for sum and count for each day-hour combination
-    const accumulator: Record<string, { sum: number; count: number }> = {};
+    // Initialize accumulator for sum, count, and prediction flag for each day-hour combination
+    const accumulator: Record<string, { sum: number; count: number; isPrediction: boolean }> = {};
 
-    // Initialize all possible day-hour combinations with 0
     for (let day = 0; day < 7; day++) {
       for (let hour = 0; hour < 24; hour++) {
         const key = `${day}-${hour}`;
-        accumulator[key] = { sum: 0, count: 0 };
+        accumulator[key] = { sum: 0, count: 0, isPrediction: false };
       }
     }
 
@@ -78,51 +77,60 @@ export function HeatmapVisualization({ hourlyData, hourlyPredictions = [], loadi
     const todayStr = format(now, 'yyyy-MM-dd');
     const currentHour = now.getHours();
 
+    // Track which actuals exist for today
+    const actualsToday = new Set<number>();
+    hourlyData.forEach(entry => {
+      if (entry.date === todayStr) {
+        actualsToday.add(entry.hour);
+      }
+    });
+
     // Aggregate actual data by day and hour
     hourlyData.forEach(entry => {
       const dateStr = entry.date;
       let day: number;
-      
-      // If we have specific date filtering (day or week mode), use that
       if (dateToDay.size > 0) {
-        if (!dateToDay.has(dateStr)) return; // Skip dates not in our range
+        if (!dateToDay.has(dateStr)) return;
         day = dateToDay.get(dateStr)!;
       } else {
         const date = new Date(dateStr);
-        day = date.getDay(); // 0-6
+        day = date.getDay();
       }
-      
       const hour = entry.hour;
       const key = `${day}-${hour}`;
-
       accumulator[key].sum += entry.total;
       accumulator[key].count += 1;
+      // Mark as not prediction
+      accumulator[key].isPrediction = false;
     });
 
-    // Aggregate predictions for future hours/days
+    // Aggregate predictions for today (if no actual) and future hours/days
     hourlyPredictions.forEach(entry => {
       const dateStr = entry.date;
-      const isToday = dateStr === todayStr;
-      const isFuture = dateStr > todayStr || (isToday && entry.hour > currentHour);
-
-      if (!isFuture) return; // Only use predictions for future
-
       let day: number;
-      
-      // If we have specific date filtering (day or week mode), use that
       if (dateToDay.size > 0) {
-        if (!dateToDay.has(dateStr)) return; // Skip dates not in our range
+        if (!dateToDay.has(dateStr)) return;
         day = dateToDay.get(dateStr)!;
       } else {
         const date = new Date(dateStr);
-        day = date.getDay(); // 0-6
+        day = date.getDay();
       }
-      
       const hour = entry.hour;
       const key = `${day}-${hour}`;
-
-      accumulator[key].sum += entry.total;
-      accumulator[key].count += 1;
+      const isToday = dateStr === todayStr;
+      const isFuture = dateStr > todayStr || (isToday && hour > currentHour);
+      // For today: use prediction if no actual exists for this hour
+      if (isToday && !actualsToday.has(hour)) {
+        accumulator[key].sum += entry.total;
+        accumulator[key].count += 1;
+        accumulator[key].isPrediction = true;
+      }
+      // For future: always use prediction
+      if (isFuture) {
+        accumulator[key].sum += entry.total;
+        accumulator[key].count += 1;
+        accumulator[key].isPrediction = true;
+      }
     });
 
     // Convert to array format and calculate averages
@@ -133,10 +141,10 @@ export function HeatmapVisualization({ hourlyData, hourlyPredictions = [], loadi
         day,
         hour,
         value: Number.isFinite(avg) ? avg : 0,
-      };
+        isPrediction: value.isPrediction,
+      } as HeatmapData & { isPrediction?: boolean };
     });
 
-    console.log('Processed heatmap data:', processedData);
     setHeatmapData(processedData);
   }, [hourlyData, hourlyPredictions, dateRange]);
 
@@ -215,10 +223,10 @@ export function HeatmapVisualization({ hourlyData, hourlyPredictions = [], loadi
     return normalized > 0.6 ? '#ffffff' : '#000000';
   };
 
-  // Get value for a specific day and hour
-  const getValue = (day: number, hour: number) => {
+  // Get value and prediction flag for a specific day and hour
+  const getCell = (day: number, hour: number) => {
     const cell = heatmapData.find(d => d.day === day && d.hour === hour);
-    return cell ? Math.round(cell.value) : 0;
+    return cell ? cell : { value: 0, isPrediction: false };
   };
 
   if (loading) {
@@ -245,6 +253,9 @@ export function HeatmapVisualization({ hourlyData, hourlyPredictions = [], loadi
             : dateRange && dateRange.type === 'week'
             ? `Weekly Traffic Pattern (${format(dateRange.start, 'd MMM')} - ${format(dateRange.end, 'd MMM')}) - ${street}`
             : `Traffic Pattern - ${street}`}
+          {dateRange && dateRange.type === 'month' && (
+            <span className="block text-xs text-red-500 mt-1">(Only suitable for day and week view)</span>
+          )}
         </CardTitle>
       </CardHeader>
       <CardContent className="pb-4">
@@ -270,7 +281,8 @@ export function HeatmapVisualization({ hourlyData, hourlyPredictions = [], loadi
                   {dayLabels[idx]}
                 </div>
                 {hours.map(hour => {
-                  const value = getValue(day, hour);
+                  const cell = getCell(day, hour);
+                  const value = Math.round(cell.value);
                   return (
                     <div
                       key={hour}
@@ -281,8 +293,8 @@ export function HeatmapVisualization({ hourlyData, hourlyPredictions = [], loadi
                       }}
                     >
                       {/* Tooltip */}
-                      <div className="absolute hidden group-hover:block z-10 p-2 bg-black text-white text-xs rounded shadow-lg -top-8 left-1/2 transform -translate-x-1/2 whitespace-nowrap">
-                        {value} pedestrians
+                      <div className="absolute hidden group-hover:block z-10 p-2 bg-black text-white text-xs rounded shadow-lg top-full mt-2 left-1/2 transform -translate-x-1/2 whitespace-nowrap">
+                        {value} pedestrians{cell.isPrediction ? ' (prediction)' : ''}
                       </div>
                     </div>
                   );

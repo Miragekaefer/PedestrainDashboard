@@ -1,5 +1,287 @@
 # Pedestrian Prediction System
 
+Dieses Repository stellt ein vollständiges Passanten-Analytics-System für Würzburg bereit. Es kombiniert historische Messungen, aktuelle Datenfeeds, Wettervorhersagen sowie Event- und Kalenderinformationen, um Prognosen zu erzeugen und sie in einem modernen Dashboard aufzubereiten.
+
+Das Projekt besteht aus einem FastAPI-Backend mit Redis als Zeitreihen-Store, einem Next.js 15 Frontend für Visual Analytics und einem ML-Stack zur Generierung stündlicher Vorhersagen (bis zu acht Tage in die Zukunft).
+
+## Highlights
+
+- Echtzeit- und historische Visualisierung mit Next.js 15, React 19, Tailwind und shadcn/ui (`frontend/components/dashboard.tsx`)
+- Aggregierte Statistiken, Trendprognosen, Heatmaps und Kalenderereignisse in einer Oberfläche (`frontend/components/charts`, `statistics`, `calendar`)
+- FastAPI-Backend mit umfangreichen Endpoints für Zeitreihen, Events, Kalender und Standortdaten (`backend/api/main.py`)
+- Automatisierte Daten-Pipeline inkl. CSV-Import, Open-Data-Fetcher und stündlicher Scheduler für ML-Vorhersagen (`backend/scripts/initial_load.py`, `data_ingestion/scheduler.py`)
+- Containerisierte Laufzeit mittels `compose.yaml` (Redis Stack, Data Loader, Scheduler, API)
+
+## Gesamtarchitektur
+
+```
+                   ┌──────────────────────────┐
+                   │       Next.js 15         │
+                   │  (App Router Dashboard)  │
+                   └────────────┬─────────────┘
+                                │ REST
+                                ▼
+┌─────────────────┐    ┌───────────────────────┐
+│  Redis Stack    │◄──►│ FastAPI (`api/main`)  │
+│  (Zeitreihen &  │    │  - Daten & Prognosen  │
+│   Feature Store)│    │  - Swagger / ReDoc    │
+└────────┬────────┘    └───────────┬───────────┘
+         ▲                         │
+         │                         │ ruft
+         │ writes/reads            │
+┌────────┴────────┐        ┌───────┴────────────┐
+│ Data Loader     │        │ Scheduler & ML      │
+│ (`scripts/...`) │        │ (`data_ingestion/`  │
+│  - CSV Import   │        │  + `ML/predict.py`) │
+│  - API Fetcher  │        │  - Stündliche Jobs  │
+└─────────────────┘        └─────────────────────┘
+```
+
+## Repository Aufbau
+
+```
+backend/
+  api/                  # FastAPI App & Endpoints
+  database/             # Redis Client & Zugriff
+  data_ingestion/       # Open-Data Fetcher & Scheduler
+  ML/                   # Training & Prediction Pipelines
+  scripts/              # CSV-Import, Initial Loader, Indexbuilder
+  data/                 # Erwartete CSV-Dateien (nicht eingecheckt)
+  requirements.txt      # Python-Abhängigkeiten
+  Dockerfile
+
+frontend/
+  app/                  # Next.js App Router Einstieg
+  components/           # Dashboard, Charts, Filter, UI
+  lib/                  # API-Client, Types, Hooks
+  public/
+  package.json
+
+compose.yaml            # Docker Compose Stack (Redis + Backend Services)
+```
+
+## Schnellstart
+
+### Voraussetzungen
+
+- Docker & Docker Compose (oder Podman Compose)
+- Node.js ≥ 20 (für lokale Frontend-Entwicklung mit Turbopack)
+- Python 3.11 (nur falls Backend ohne Container betrieben werden soll)
+- Eigener OpenWeather API-Key für Prognosen (kostenlos erhältlich unter https://openweathermap.org/)
+
+### 1. Umgebungsvariablen anlegen
+
+Erstelle im Projektroot eine `.env` (für Backend & Compose):
+
+```bash
+OPENWEATHER_API_KEY=<dein_openweather_api_key>
+REDIS_HOST=redis
+REDIS_PORT=6379
+```
+
+Für das Frontend wird eine `frontend/.env.local` benötigt:
+
+```bash
+NEXT_PUBLIC_API_URL=http://localhost:8000
+```
+
+### 2. CSV-Daten bereitstellen
+
+Lege die Rohdaten in `backend/data/` ab. Erwartet werden u. a.:
+
+- `dataAllStreets.csv` – historische Passantenzählungen (stündlich)
+- `counterGeoLocations.csv` – Zählstellen inklusive Geometrie
+- `bavarian_public_holidays*.csv`, `bavarian_school_holidays*.csv`
+- `events.csv`, `events_daily.csv`
+- `lectures.csv`, `lectures_daily.csv`
+
+Siehe Abschnitt [Datenpipeline & Machine Learning](#datenpipeline--machine-learning) für Details zu den Formaten.
+
+### 3. Stack starten (empfohlener Weg)
+
+```bash
+# Repository klonen
+git clone <repository-url>
+cd PedestrainDashboard - Kopie
+
+# Container bauen & starten
+docker compose up -d --build
+
+# Logs ansehen
+docker compose logs -f --tail=50
+```
+
+Nach wenigen Minuten (Initialimport + erste Prognose) stehen folgende URLs zur Verfügung:
+
+- Dashboard: http://localhost:3000
+- FastAPI + Swagger: http://localhost:8000 /docs
+- Redis Insight (Visualisierung der Keys): http://localhost:8001
+
+Compose-Services:
+
+- `redis` – Redis Stack (inkl. Insight UI)
+- `data_loader` – einmaliger CSV-/API-Import (`scripts/initial_load.py`)
+- `scheduler` – stündliche Updates + ML-Vorhersagen (`data_ingestion/scheduler.py`)
+- `api` – FastAPI mit `uvicorn --reload`
+
+### 4. Frontend im Dev-Modus (optional)
+
+```bash
+cd frontend
+npm install
+npm run dev  # läuft auf http://localhost:3000
+```
+
+Durch das Volume-Mounting in `compose.yaml` können Frontend-/Backend-Dateien direkt bearbeitet werden; Hot Reload sorgt für schnelle Iteration.
+
+## Manuelle Entwicklung ohne Docker
+
+1. Redis starten (z. B. lokal `redis-stack` auf Port 6379/8001)
+2. Backend-Abhängigkeiten installieren:
+   ```bash
+   cd backend
+   python -m venv .venv
+   source .venv/bin/activate
+   pip install -r requirements.txt
+   ```
+3. Initiale Daten laden:
+   ```bash
+   python scripts/initial_load.py
+   ```
+4. API starten:
+   ```bash
+   uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
+   ```
+5. Scheduler (für kontinuierliche Updates) separat ausführen:
+   ```bash
+   python -m data_ingestion.scheduler
+   ```
+6. Frontend wie oben starten (`npm run dev`).
+
+## Backend Komponenten
+
+- `backend/api/main.py`: Haupt-FastAPI-Anwendung mit Endpoints für Historie, Prognosen, Kalenderdaten, Locations und Statusinformationen. Enthält CORS-Setup für lokale Entwicklung.
+- `backend/database/redis_client.py`: High-Level-Wrapper für Redis, inkl. Indexierung via Sorted Sets für schnelle Bereichsabfragen.
+- `backend/scripts/initial_load.py`: Orchestriert CSV-Importe, ruft Open-Data-API, baut Redis-Indizes und erzeugt initiale Prognosen.
+- `backend/data_ingestion/api_fetcher.py`: Holt gestaffelte Datensätze aus dem Würzburg Open-Data-Portal (monatliche Pagination, Bulk-Insert in Redis).
+- `backend/data_ingestion/scheduler.py`: APScheduler-basierter Jobrunner (Fetch neuester Messwerte, generiere ML-Prognosen, Wartung).
+- `backend/ML/train.py`: Modelltraining (XGBoost/LightGBM) auf Basis der Daten aus der API. Beinhaltet umfangreiche Feature-Engineering-Funktionen (Zeit, Wetter, Events, Ferien).
+- `backend/ML/predict.py`: Lädt ein trainiertes Modell, generiert 8-Tages-Vorhersagen (unter Einbezug der OpenWeather-Vorhersage) und persistiert sie in Redis (`pedestrian:hourly:prediction:*`).
+
+## API Überblick
+
+| Endpoint | Beschreibung |
+| --- | --- |
+| `GET /` | Health-Check inkl. Endpoint-Referenzen |
+| `GET /api/streets` | Liste aller Zählstellen + Koordinaten |
+| `GET /api/pedestrians/historical` | Historische Messdaten für Straße + Zeitraum |
+| `GET /api/pedestrians/detailed/{street}/{date}/{hour}` | Detailansicht inkl. Wetter, Richtungen, Incidents |
+| `GET /api/pedestrians/predictions` | Prognosen für Straße(n) und Zeitraum |
+| `GET /api/pedestrians/latest/{street}` | Letztes verfügbares Messintervall |
+| `GET /api/calendar/{date}` | Feiertage, Schulferien, Vorlesungsperioden, Events |
+| `GET /api/events/{date}` | Tagesereignisse mit Details |
+| `GET /api/locations(/…)` | Zählstellen-Metadaten (IDs, GeoJSON) |
+| `GET /api/holiday/all`, `/api/school-holiday/all`, `/api/lecture/all` | Rohdaten-Exports für ML |
+| `GET /api/predictions/status` | Coverage & Zeitstempel der vorhandenen Prognosen |
+
+Swagger und ReDoc sind unter `/docs` bzw. `/redoc` erreichbar.
+
+## Frontend Funktionen
+
+Hauptkomponente: `frontend/components/dashboard.tsx`
+
+- **Filter** (`filters/street-filter.tsx`, `filters/date-filter.tsx`): Auswahl einzelner Straßen oder Aggregation über alle Straßen, Zeitfenster (Tag/Woche/Monat) mit Datumspicker.
+- **KPI-Karten** (`statistics/statistics-cards.tsx`): Gesamtanzahl (inkl. live Prognoseauffüllung), Peak-Analysen (Tag = Peak-Stunde, Woche/Monat = Spitzen-Tag), Trend-Vorhersage für konfigurierbare Zeitfenster, Wetterzusammenfassung.
+- **Zeitreihe & Vergleich** (`charts/data-visualization.tsx`): Wechsel zwischen stündlicher Ansicht, Tagesbalken, Vergleich mit Vorperiode (Vortag, Vorwoche, Vormonat, Vorjahr), Integration von Prognosewerten (gestrichelte Linien, Einblendung/Checkboxen).
+- **Heatmap** (`charts/heatmap-visualization.tsx`): Tages-/Wochen-Pattern, kombiniert historische Werte mit zukünftigen Prognosen.
+- **Kalender-Widget** (`calendar/calendar-component.tsx`): Konsolidierte Ansicht aus Feiertagen, Ferien, Vorlesungen und Events (inkl. anstehender Events).
+- **Dark-/Lightmode** (`components/theme-toggle.tsx`) und globale Layouts (`app/layout.tsx`, `app/globals.css`).
+- **Datenzugriff**: TanStack Query (`components/providers.tsx`, `lib/api.ts`) mit Caching, Fehlerhandling und Utility-Transformationen (`transformToHourlyData`, `transformToDailyData`, etc.).
+
+## Datenpipeline & Machine Learning
+
+1. **Initial Load (`scripts/initial_load.py`)**
+   - CSV-Dateien in Redis importieren (`scripts/import_*.py`)
+   - Historische Daten über Open-Data-API (Jahr 2024/2025) in Redis laden
+   - Redis-Indizes (Sorted Sets) aufbauen (`scripts/build_indexes.py`)
+   - Erste Prognosen erzeugen (`ML/predict.run_predictions_and_store`)
+
+2. **Regelmäßige Updates (`data_ingestion/scheduler.py`)**
+   - `fetch_hourly_updates`: Holt die letzten Stunden Messdaten (pro Straße) und schreibt sie via `PedestrianRedisClient`.
+   - `fetch_predictions`: Triggert `ML/predict.py`, nutzt OpenWeather Forecast (`fetch_weather_forecast`) und verteilt Prognosen auf alle Straßen.
+
+3. **Machine Learning**
+   - `ML/train.py`: Lädt via API alle historischen Daten, reichert sie mit Events, Feiertagen, Vorlesungszeiten und Wettermerkmalen an, trainiert XGBoost/LightGBM und speichert Modell + Feature-Liste.
+   - `ML/predict.py`: Nutzt das Modell, generiert `pedestrian:hourly:prediction:{street}:{date}:{hour}` Keys mit TTL und pflegt Status-Endpunkt (`get_prediction_status`).
+
+4. **Redis-Datenschema (Auszug)**
+   - Messwerte: `pedestrian:hourly:{street}:{date}:{hour}`
+   - Indizes: `pedestrian:index:{street}` (Sorted Set nach Timestamp)
+   - Prognosen: `pedestrian:hourly:prediction:{street}:{date}:{hour}`
+   - Kalender: `holiday:*`, `school_holiday:*`, `event:*`, `lecture:*`
+   - Locations: `location:name:{street}`, `location:id:{id}`
+
+## Entwicklungs-Workflows
+
+### Backend
+
+```bash
+# API lokal starten
+uvicorn api.main:app --reload --port 8000
+
+# Daten erneut importieren (z. B. nach CSV-Updates)
+python scripts/initial_load.py
+
+# Scheduler in separatem Terminal
+python -m data_ingestion.scheduler
+```
+
+### Frontend
+
+```bash
+cd frontend
+npm run lint     # ESLint (nutzt eslint.config.mjs)
+npm run build    # Production Check inkl. TypeScript
+```
+
+### Tests
+
+Aktuell existieren keine automatisierten Tests im Repo. Empfohlen wird:
+
+- Backend: Pytest + httpx-Client (`FastAPI TestClient`) für zukünftige Erweiterungen
+- Frontend: Playwright oder Cypress für End-to-End, Vitest/RTL für Komponenten
+
+## Troubleshooting
+
+- **Redis nicht erreichbar**: Verifiziere `REDIS_HOST`/`REDIS_PORT`, prüfe `docker compose ps`, nutze `docker compose logs redis`.
+- **OpenWeather Key fehlt/ungültig**: Prognosen schlagen fehl ⇒ Scheduler-Log prüfen (`prediction update failed`). Gültigen Key in `.env` setzen.
+- **Frontend spricht falsche API an**: `frontend/.env.local` prüfen; `NEXT_PUBLIC_API_URL` muss exakt zum Backend passen.
+- **Langsame API beim Initialimport**: `scripts/initial_load.py` ruft Jahr 2024 & 2025 ab. Für schnellere Tests kannst du `for year in ["2024", "2025"]` temporär reduzieren.
+- **Port-Konflikte**: `docker compose` lässt Ports konfigurieren (`compose.yaml`). Alternativ lokale Ports anpassen (`PORT=3001 npm run dev`, `uvicorn --port 8080`).
+- **Lange Laufzeit ML-Pipeline**: `ML/train.py` holt sämtliche Daten via API. Für inkrementelles Training Filter/Jahresauswahl anpassen.
+
+## Contributing
+
+Pull-Requests sind willkommen! Bitte beachte:
+
+1. Feature-Branch nach Konvention (`feature/...`, `fix/...`, `docs/...`).
+2. Konventionelle Commit-Messages (z. B. `feat: add prediction overlay`).
+3. Linting & Builds lokal ausführen (`npm run lint`, `npm run build`, `uvicorn` Smoke-Test).
+4. README oder Dokumentation aktualisieren, falls Verhalten sich ändert.
+5. Keine Secrets, CSVs oder `node_modules` einchecken.
+
+## Weiterführende Links
+
+- Next.js Dokumentation: https://nextjs.org/docs
+- FastAPI Dokumentation: https://fastapi.tiangolo.com/
+- Redis Stack: https://redis.io/docs/
+- TanStack Query: https://tanstack.com/query/latest
+- shadcn/ui: https://ui.shadcn.com/
+- Würzburg Open Data Portal: https://data.wuerzburg.de/
+
+Bei Fragen: Logs prüfen (`docker compose logs -f`), Swagger-UI verwenden oder Redis Insight auf http://localhost:8001 öffnen.
+# Pedestrian Prediction System
+
 Ein umfassendes System zur Analyse und Vorhersage von Passantenströmen in Würzburg. Das System kombiniert historische Daten, Wetterbedingungen, Events und Kalenderinformationen, um präzise Vorhersagen zu treffen und diese in einem interaktiven Dashboard zu visualisieren.
 
 **Features:**

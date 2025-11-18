@@ -120,11 +120,36 @@ export function DateFilter({ dateRange, onDateRangeChange }: DateFilterProps) {
               selected={dateRange.start}
               onSelect={handleDateSelect}
               initialFocus
+              modifiers={{
+                prediction: Array.from({length: 8}, (_, i) => {
+                  const d = new Date();
+                  d.setDate(d.getDate() + i);
+                  d.setHours(0,0,0,0);
+                  return d;
+                })
+              }}
+              modifiersClassNames={{
+                prediction: 'bg-green-100 dark:bg-green-900'
+              }}
             />
           </PopoverContent>
         </Popover>
       </div>
 
+      {/* Show info if selected day is more than 8 days in the future */}
+      {dateRange.type === 'day' && differenceInCalendarDays(dateRange.start, new Date()) > 8 && (
+        <div className="text-xs font-semibold mt-1 bg-red-500/20 text-red-600 dark:text-red-400 rounded px-2 py-1">
+          We only provide forecast data for up to 8 days in advance.
+        </div>
+      )}
+      {/* Show info if week/month selection exceeds forecast horizon */}
+      {(dateRange.type === 'week' || dateRange.type === 'month') && differenceInCalendarDays(dateRange.end, new Date()) > 8 && (
+        <div className="text-xs font-semibold mt-1 bg-red-500/20 text-red-600 dark:text-red-400 rounded px-2 py-1">
+          {differenceInCalendarDays(dateRange.start, new Date()) > 8
+            ? 'We only provide forecast data for up to 8 days in advance.'
+            : 'We only provide forecast data for up to 8 days in advance. The forecast for this period is incomplete.'}
+        </div>
+      )}
       {/* Current Selection Info */}
       <div className="text-xs text-gray-500 dark:text-gray-400 space-y-1 pt-2 border-t dark:border-gray-700">
         <div className="flex justify-between">

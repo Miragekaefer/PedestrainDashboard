@@ -625,7 +625,7 @@ useEffect(() => {
     endWindow.setHours(0, 0, 0, 0);
     while (currentDate <= endWindow) {
       dates.push(new Date(currentDate));
-      currentDate.setDate(currentDate.getDate() + 1);
+      currentDate.setDate(currentDate.getDate()+1);
     }
 
     const promises = dates.map(async (date) => {
@@ -748,6 +748,7 @@ useEffect(() => {
 
   return (
     <div className="min-h-screen flex flex-col bg-gray-50 dark:bg-gray-900">
+    <div className="max-w-[1600px] mx-auto w-full border-l border-r border-gray-200 dark:border-gray-700"></div>  
       {/* Header */}
       <header className="bg-white dark:bg-gray-800 shadow-sm border-b dark:border-gray-700 flex-shrink-0">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -767,44 +768,68 @@ useEffect(() => {
         </div>
       </header>
 
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto px-4 sm:px-6 lg:px-8 py-6 h-full">
         <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-6 h-full">
           </div>
           <div className="grid grid-cols-1 lg:grid-cols-5 gap-6 h-full">
             {/* Full-width Recommendations - compact */}
             <div className="lg:col-span-5">
-              <Card className="mb-0">
-                <CardHeader className="py-0 pb-0">
-                  <CardTitle className="leading-none mb-0">Recommendations</CardTitle>
-                </CardHeader>
-                <CardContent className="pt-0 pb-0">
-                  {!statistics ? (
-                    <p className="text-xs leading-none m-0">No recommendations</p>
-                  ) : (
-                    <div className="flex flex-col gap-1 text-xs leading-none m-0">
-                        <span className="font-medium">Peak: <strong>{(todayPeakHour ?? statistics?.peakHour ?? 0)}:00</strong> — <span className="font-normal">consider adapting staffing accordingly</span></span>
-                        {todayTrendPct !== null ? (
-                          <span className="mt-0">
-                            {todayTrendPct > 0
-                              ? `Total pedestrians up ${todayTrendPct}% compared to the same time last week.`
-                              : todayTrendPct < 0
-                                ? `Total pedestrians down ${Math.abs(todayTrendPct)}% compared to the same time last week.`
-                                : `Total pedestrians no change (0%) compared to the same time last week.`}
-                          </span>
-                        ) : null}
-                      {nextUpcomingEvent ? (
-                        <>
-                          <span className="mt-0">{isEventToday ? 'Event:' : 'Next event:'} <strong>{nextUpcomingEvent.name}</strong> on {format(new Date(nextUpcomingEvent.date), 'dd.MM')} — <span className="font-normal">consider adapting operations</span></span>
-                          {eventImpactPct !== null ? (
-                            <span className="mt-0">Expected impact: {eventImpactPct >= 0 ? `+${eventImpactPct}` : eventImpactPct}% vs last month's avg</span>
-                          ) : null}
-                        </>
-                      ) : null}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
+  <Card className="mb-0 border border-blue-500 dark:border-blue-400 rounded-md">
+    <CardHeader className="py-1">
+      <CardTitle className="flex items-center gap-1 text-base font-bold text-gray-900 dark:text-gray-100 mb-0">
+        <TrendingUp className="w-5 h-5 text-blue-500 dark:text-blue-400" />
+        Today's Recommendations
+      </CardTitle>
+    </CardHeader>
+
+    <CardContent className="pt-1 pb-1">
+      {!statistics ? (
+        <span className="text-xs">No recommendations</span>
+      ) : (
+        <div className="flex flex-wrap gap-2">
+          {/* Peak hour recommendation */}
+          <div className="flex-1 min-w-[120px] bg-blue-50 dark:bg-gray-800/30 rounded-md p-2 text-xs font-medium flex flex-col items-start justify-center">
+            <span className="text-blue-600 dark:text-blue-400">Peak Hour</span>
+            <strong>{todayPeakHour ?? statistics?.peakHour ?? 0}:00</strong>
+            <span className="font-normal text-gray-600 dark:text-gray-300">Adjust staffing</span>
+          </div>
+
+          {/* Trend recommendation */}
+          {todayTrendPct !== null && (
+            <div className="flex-1 min-w-[120px] bg-green-50 dark:bg-green-900/30 rounded-md p-2 text-xs font-medium flex flex-col items-start justify-center">
+              <span className={todayTrendPct > 0 ? "text-green-600 dark:text-green-400" : todayTrendPct < 0 ? "text-red-600 dark:text-red-400" : "text-gray-500"}>
+                {todayTrendPct > 0 ? 'Up Trend' : todayTrendPct < 0 ? 'Down Trend' : 'No Change'}
+              </span>
+              <strong>
+                {todayTrendPct > 0 ? `+${todayTrendPct}%` : todayTrendPct < 0 ? `${todayTrendPct}%` : '0%'}
+              </strong>
+              <span className="font-normal text-gray-600 dark:text-gray-400">vs last week</span>
             </div>
+          )}
+
+          {/* Event recommendation */}
+          {nextUpcomingEvent && (
+            <div className="flex-1 min-w-[120px] bg-orange-50 dark:bg-orange-900/30 rounded-md p-2 text-xs font-medium flex flex-col items-start justify-center">
+              <span className="text-orange-600 dark:text-orange-400">
+                {isEventToday ? 'Event Today' : 'Next Event'}
+              </span>
+              <strong>{nextUpcomingEvent.name}</strong>
+              <span className="font-normal text-gray-600 dark:text-gray-400">Adjust accordingly</span>
+              {eventImpactPct !== null && (
+                <Badge
+                  variant={eventImpactPct >= 0 ? 'destructive' : 'secondary'}
+                  className="mt-1 text-[9px] py-0 px-1"
+                >
+                  {eventImpactPct >= 0 ? `+${eventImpactPct}%` : `${eventImpactPct}%`}
+                </Badge>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </CardContent>
+  </Card>
+</div>
             {/* Sidebar - Filters */}
             <div className="lg:col-span-1">
               <Card className="sticky top-0">
@@ -881,6 +906,7 @@ useEffect(() => {
                     dateRange={filters.dateRange}
                     comparisonSeries={comparisonSeries}
                     streetTotals={streetTotals}
+                    street={filters.street}
                   />
                   
                   <HeatmapVisualization
