@@ -119,7 +119,7 @@ def generate_future_dataset_from_latest(latest_date: str, latest_hour: int, api_
     - pd.DataFrame with columns: 
       ['id','streetname','date','hour','temperature','weather_condition','incidents','weekday','collection_type','city']
     """
-    streets = ["Kaiserstraße", "Spiegelstraße", "Schoenbornstraße"]
+    streets = ["Kaiserstraße", "Spiegelstraße", "Schönbornstraße"]
     city = "Wuerzburg,de"
     incidents = "no_incident"
     collection_type = "measured"
