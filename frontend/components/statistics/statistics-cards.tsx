@@ -85,7 +85,13 @@ export function StatisticsCards({ statistics, loading, street, dateRange, hourly
       const isFuture = isAfter(selectedDate, now);
 
       if (!isToday && !isFuture) {
-        // Past date: only show actual data
+        // Past date: prefer to compute actual total from client-side hourlyData
+        const actualForDate = hourlyData.filter(d => d.date === selectedDateStr);
+        if (actualForDate && actualForDate.length > 0) {
+          const sum = actualForDate.reduce((s, h) => s + (h.total || 0), 0);
+          return Math.round(sum);
+        }
+        // Fallback to backend-provided statistic if hourly data not available
         return statistics.totalPedestrians;
       }
 
