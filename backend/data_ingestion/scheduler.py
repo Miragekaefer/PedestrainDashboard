@@ -120,6 +120,20 @@ def fetch_predictions():
     except Exception as e:
         logger.error(f"Prediction update failed: {e}", exc_info=True)
 
+@scheduler.scheduled_job(
+    CronTrigger(hour=3, minute=30),  # every day at 03:30
+    misfire_grace_time=600
+)
+def retrain_daily_model():
+    """Retrains the ML model once per day."""
+    logger.info("\n------ DAILY MODEL RETRAINING ------")
+    try:
+        from ML.train import run_daily_training
+        model_path = run_daily_training()
+        logger.info(f"✓ Daily model retraining completed → {model_path}")
+    except Exception as e:
+        logger.error(f"Daily model retraining failed: {e}", exc_info=True)
+
 # -------------------------------------------------
 # Startup Routine
 # -------------------------------------------------

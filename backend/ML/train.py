@@ -156,13 +156,24 @@ def load_events_from_api(base_url=BASE_URL):
         res.raise_for_status()
         data = res.json().get("events", [])
     except Exception as e:
-        print(f"❌ Failed to fetch events from {url}: {e}")
-        return []
+        print(f"❌ Failed to fetch events: {e}")
+        return pd.DataFrame(columns=["date", "hour", "event", "concert"])
 
-    if not data:
-        print(f"❌ Failed to fetch events from {url}")
-        return []
-    
+    rows = []
+    for d in data:
+        date_raw = d.get("datetime") or d.get("date")
+        rows.append({
+            "date": date_raw,
+            "hour": d.get("hour", 0),  # default hour=0 since your data is daily
+            "event": int(d.get("event", 0)),
+            "concert": int(d.get("concert", 0))
+        })
+
+    df = pd.DataFrame(rows)
+    df['date'] = pd.to_datetime(df['date'], errors='coerce')
+    return df
+
+
     ### final structure:
     ### date,event,concert
     ### 2019-01-01 00:00:00,0,0
@@ -175,10 +186,6 @@ def load_events_from_api(base_url=BASE_URL):
     return df
 
 def load_lectures_from_api(base_url=BASE_URL):
-    """
-    Load all lecture period data from API.
-    Returns DataFrame: [date, lecture_period_jmu]
-    """
     url = f"{base_url}/api/lecture/all"
     try:
         res = requests.get(url)
@@ -186,16 +193,34 @@ def load_lectures_from_api(base_url=BASE_URL):
         data = res.json().get("data", [])
     except Exception as e:
         print(f"❌ Failed to fetch lectures from {url}: {e}")
-        return pd.DataFrame()
+        return pd.DataFrame(columns=["date", "lecture_period_jmu"])
 
-    df = pd.DataFrame([{
-        "date": d.get("date"),
-        "lecture_period_jmu": int(d.get("is_lecture_period", 0))
-    } for d in data])
+    if not data:
+        print("⚠️ Lecture API returned no data")
+        return pd.DataFrame(columns=["date", "lecture_period_jmu"])
 
-    print("test2")
+    rows = []
+    for d in data:
+        # Accept ANY of these keys
+        date_raw = (
+            d.get("date") or
+            d.get("datetime") or
+            d.get("day") or
+            None
+        )
+
+        rows.append({
+            "date": date_raw,
+            "lecture_period_jmu": int(d.get("is_lecture_period", 0))
+        })
+
+    df = pd.DataFrame(rows)
+
     df['date'] = pd.to_datetime(df['date'], errors='coerce')
+    df = df.dropna(subset=['date'])  # keep only valid dates
+
     return df
+
 
 def add_wurzburg_events(df):
     eventsDf = load_events_from_api()
@@ -227,6 +252,7 @@ def load_public_holidays_from_api(base_url=BASE_URL):
         "is_public_holiday": int(d.get("is_holiday", 0)),
         "is_nationwide": int(d.get("is_nationwide", 0))
     } for d in data])
+    print("test4")
     df['date'] = pd.to_datetime(df['date'], errors='coerce')
     return df
 
@@ -249,30 +275,74 @@ def load_school_holidays_from_api(base_url=BASE_URL):
         "is_school_holiday": int(d.get("is_school_holiday", 0))
     } for d in data])
     df['date'] = pd.to_datetime(df['date'], errors='coerce')
+    print("test5")
     return df
 
 def add_enhanced_holiday_features(df):
+    """
+    Merge public & school holidays and create derived holiday features.
+    This function is robust to small API name differences and ensures
+    columns the rest of the pipeline expects are present.
+    """
     publicHolidaysDf = load_public_holidays_from_api()
     schoolHolidaysDf = load_school_holidays_from_api()
 
+    # Ensure holiday DF has consistent column names (source may use is_holiday or is_public_holiday)
+    if "is_holiday" in publicHolidaysDf.columns and "is_public_holiday" not in publicHolidaysDf.columns:
+        publicHolidaysDf = publicHolidaysDf.rename(columns={"is_holiday": "is_public_holiday"})
+    # ensure presence of nationwide column name
+    if "is_nationwide" not in publicHolidaysDf.columns and "nationwide" in publicHolidaysDf.columns:
+        publicHolidaysDf = publicHolidaysDf.rename(columns={"nationwide": "is_nationwide"})
+
+    # Merge into main df
     df = df.merge(publicHolidaysDf, on="date", how="left")
 
+    # Normalize names in the main df: ensure is_public_holiday/is_nationwide exist
+    if "is_public_holiday" not in df.columns:
+        # maybe older name 'public_holiday' exists; map it
+        if "public_holiday" in df.columns:
+            df = df.rename(columns={"public_holiday": "is_public_holiday"})
+        else:
+            df["is_public_holiday"] = 0
+
+    if "is_nationwide" not in df.columns:
+        if "is_public_holiday_nationwide" in df.columns:
+            df = df.rename(columns={"is_public_holiday_nationwide": "is_nationwide"})
+        else:
+            df["is_nationwide"] = 0
+
+    # Fill NaNs -> 0 and cast to int
+    df["is_public_holiday"] = df["is_public_holiday"].fillna(0).astype(int)
+    df["is_nationwide"] = df["is_nationwide"].fillna(0).astype(int)
+
+    # Bridge day: day before/after a public holiday
     df["is_bridge_day"] = (
-        ((df["public_holiday"].shift(1) == 1) & (df["is_weekend"] == 1)) |
-        ((df["public_holiday"] == 1) & (df["is_weekend"].shift(-1) == 1))
+        ((df["is_public_holiday"].shift(1) == 1) & (df["is_weekend"] == 1)) |
+        ((df["is_public_holiday"] == 1) & (df["is_weekend"].shift(-1) == 1))
     ).astype(int)
 
-    df["is_public_holiday_nationwide"] = (df["public_holiday"] & df["nationwide"])
+    # Nationwide holiday flag for convenience
+    df["is_public_holiday_nationwide"] = (df["is_public_holiday"] & df["is_nationwide"]).astype(int)
+
+    # Merge school holidays; the loader returns 'is_school_holiday' already, but be defensive
+    if "is_school_holiday" not in schoolHolidaysDf.columns and "school_holiday" in schoolHolidaysDf.columns:
+        schoolHolidaysDf = schoolHolidaysDf.rename(columns={"school_holiday": "is_school_holiday"})
 
     df = df.merge(schoolHolidaysDf, on="date", how="left")
-    df.rename(columns={"public_holiday": "is_public_holiday",
-                       "school_holiday": "is_school_holiday"}, inplace=True)
+
+    # Normalize and fill school holiday column
+    if "is_school_holiday" not in df.columns:
+        df["is_school_holiday"] = 0
+    else:
+        df["is_school_holiday"] = df["is_school_holiday"].fillna(0).astype(int)
+
     return df
 
 def add_street_features(df):
     df['street_encoded'] = LabelEncoder().fit_transform(df['streetname'])
     df['is_kaiserstrasse_shopping'] = ((df['streetname'] == 'Kaiserstrasse') & (df['is_shopping_hours'] == 1)).astype(int)
     df['is_spiegelstrasse_rush'] = ((df['streetname'] == 'Spiegelstrasse') & (df['is_rush_hour'] == 1)).astype(int)
+    print("test6")
     return df
 
 def create_interaction_features(df):
@@ -280,12 +350,13 @@ def create_interaction_features(df):
         'temp_hour': df['temperature'] * df['hour'],
         'weekend_hour': df['is_weekend'] * df['hour'],
         'temp_shopping_hours': df['temperature'] * df['is_shopping_hours'],
-        'rain_rush_hour': (df['weather_condition'] == 'rain') & df['is_rush_hour'],
-        'rain_weekend': (df['weather_condition'] == 'rain') & df['is_weekend']
+        'rain_rush_hour': ((df['weather_condition'] == 'rain').fillna(False)) & (df['is_rush_hour'].fillna(0).astype(bool)),
+        'rain_weekend': ((df['weather_condition'] == 'rain').fillna(False)) & (df['is_weekend'].fillna(0).astype(bool))
     }
-    
+
     for name, interaction in interactions.items():
-        df[name] = interaction.astype(int)
+        df[name] = pd.to_numeric(interaction, errors="coerce").fillna(0).astype(int)
+    print("test7")
     return df
 
 def create_seasonal_features(df):
@@ -299,6 +370,7 @@ def create_seasonal_features(df):
     
     df['is_tourist_season'] = df['month'].isin([5,6,7,8,9,10]).astype(int)
     df['is_weekend_tourist_season'] = (df['is_weekend'] & df['is_tourist_season']).astype(int)
+    print("test8")
     return df
 
 def create_all_features(df, is_train=True, train_avg_values=None):
@@ -340,24 +412,33 @@ def create_all_features(df, is_train=True, train_avg_values=None):
         if col not in ['id', 'streetname', 'date']:
             df[f'{col}_encoded'] = le.fit_transform(df[col])
     
-    df.index = original_index
-    
+
+    print("test9")
     return (df, avg_values) if is_train else df
 
 def get_feature_columns(df):
     exclude_cols = ['id', 'datetime', 'date', 'streetname', 'city',
                    'n_pedestrians', 'n_pedestrians_towards', 'n_pedestrians_away',
                    'incidents', 'collection_type', 'season', 'temp_band', 'weather_condition']
-    
+    print("test10")
     return [col for col in df.select_dtypes(include=['int64', 'float64']).columns if col not in exclude_cols]
 
 def train_model(model_out: str, target_col: str = "n_pedestrians", model_type: str = "xgb"):
     """
     Train a model on your own dataset and save it to disk.
     """
-    # Load raw CSV
+    # Load raw data
     df = load_pedestrian_data_from_api()
     print(f"✅ Loaded {len(df)} pedestrian records")
+
+    # -----------------------------------------------
+    # 🔥 FIX: Convert pedestrian counts to numeric and drop invalid rows
+    # -----------------------------------------------
+    for col in ['n_pedestrians', 'n_pedestrians_towards', 'n_pedestrians_away']:
+        df[col] = pd.to_numeric(df[col], errors='coerce')
+    df = df.dropna(subset=['n_pedestrians', 'n_pedestrians_towards', 'n_pedestrians_away'])
+    # -----------------------------------------------
+
     # Feature engineering
     df, avg_values = create_all_features(df, is_train=True)
 
@@ -412,16 +493,41 @@ def train_model(model_out: str, target_col: str = "n_pedestrians", model_type: s
 
     # Save model + feature columns
     with open(model_out, "wb") as f:
-        pickle.dump((model, feature_cols), f)
-
-    print(f"✅ Model saved to {model_out}")
+        pickle.dump({
+            "model": model,
+            "feature_cols": feature_cols,
+            "avg_values": avg_values
+        }, f)
 
 # -----------------------
 # Run training
 # -----------------------
-if __name__ == "__main__":
+def run_full_retraining():
+    """
+    Wrapper used by the scheduler to retrain and replace the ML model.
+    """
+    MODEL_PATH = "backend/ML/models/trained_model.pkl"
+
+    print("🔥 Starting full model retraining...")
     train_model(
-        model_out="backend/trained_model.pkl",
+        model_out=MODEL_PATH,
         target_col="n_pedestrians",
         model_type="xgb"
     )
+    print("✅ Full retraining completed. Model replaced.")
+
+if __name__ == "__main__":
+    train_model(
+        model_out="backend/ML/models/trained_model.pkl",
+        target_col="n_pedestrians",
+        model_type="xgb"
+    )
+
+def run_daily_training():
+    MODEL_PATH = "backend/ML/models/trained_model.pkl"
+    train_model(
+        model_out=MODEL_PATH,
+        target_col="n_pedestrians",
+        model_type="xgb"
+    )
+    return MODEL_PATH

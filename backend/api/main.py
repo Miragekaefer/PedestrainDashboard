@@ -395,32 +395,53 @@ async def get_calendar_info(
 @app.get(
     "/api/all_event_dates",
     summary="Alle Events",
-    description="""
-    Gibt alle Events mit stündlicher Auflösung zurück.
-    
-    **Format:**
-    - `date`: Datum im Format YYYY-MM-DD
-    - `hour`: Stunde (0-23)
-    - `datetime`: Datum im Format YYYY-MM-DD HH-MM-SS
-    - `event`: Boolean ob Event vorhanden
-    - `concert`: Boolean ob Konzert vorhanden
-    
-    **Beispiel:**
-    GET /api/events/all_dates
-    """,
     tags=["Calendar Features"]
 )
 async def get_all_events():
     try:
-        events = redis_client.get_all_events()
+        raw_events = redis_client.get_all_events()
+        normalized = []
 
-        print(events)
-        
+        for ev in raw_events:
+            date_raw = ev.get("date") or ev.get("datetime")
+            hour_raw = ev.get("hour", 0)
+
+            # Normalize date
+            if isinstance(date_raw, str):
+                # Try to parse both YYYY-MM-DD and full range strings
+                if "_" in date_raw:  
+                    # Extract ONLY the first date before the first underscore
+                    # e.g. "2023-05-28_11-00_2023-05-28_23-59"
+                    date_raw = date_raw.split("_")[0]
+
+            # Convert event flag
+            event_raw = ev.get("event", 0)
+            if isinstance(event_raw, str) and not event_raw.isdigit():
+                # Any non-numeric string means: yes, this IS an event day
+                event_flag = 1
+            else:
+                event_flag = int(event_raw)
+
+            # Convert concert flag
+            concert_raw = ev.get("concert", 0)
+            if isinstance(concert_raw, str) and not concert_raw.isdigit():
+                concert_flag = 1
+            else:
+                concert_flag = int(concert_raw)
+
+            normalized.append({
+                "date": date_raw,
+                "hour": int(hour_raw),
+                "event": event_flag,
+                "concert": concert_flag,
+                "datetime": f"{date_raw} {hour_raw:02d}:00:00"
+            })
+
         return {
-            "count": len(events),
-            "events": events
+            "count": len(normalized),
+            "events": normalized
         }
-    
+
     except Exception as e:
         logger.error(f"Error fetching all events: {e}")
         raise HTTPException(status_code=500, detail=str(e))
