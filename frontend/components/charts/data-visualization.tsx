@@ -41,6 +41,7 @@ type Props = {
   streetTotals?: { street: string; total: number }[]; // for pie chart when all streets
   comparisonSeries?: { key: string; name: string; data: any[]; color?: string; opacity?: number }[]; // overlay series
   street?: string;
+  streets?: string[]; // list of all streets for All_streets comparison fetching
 };
 
 // ---------- Data Builders (unchanged but slightly hardened) ----------
@@ -177,7 +178,8 @@ export const DataVisualization: React.FC<Props> = ({
   loading,
   dateRange,
   streetTotals,
-  street
+  street,
+  streets = []
 }) => {
   const [view, setView] = useState<'hourly' | 'daily' | 'comparison'>('hourly');
   
@@ -475,11 +477,47 @@ export const DataVisualization: React.FC<Props> = ({
     (async () => {
       try {
         const results: Record<string, HourlyDataPoint[]> = {};
-        for (const d of datesToFetch) {
-          const resp = await pedestrianAPI.getHistoricalData(street, d, d);
-          const hourly = pedestrianAPI.transformToHourlyData(resp?.data ?? []);
-          results[d] = hourly;
+        
+        if (street === 'All_streets') {
+          // For All_streets, aggregate data from all streets
+          if (!streets || streets.length === 0) {
+            if (mounted) setFetchedComparisonHourly(prev => ({ ...prev, ...results }));
+            return;
+          }
+
+          for (const d of datesToFetch) {
+            // Fetch both historical and prediction data
+            const historicalResponses = await Promise.all(
+              streets.map(st => pedestrianAPI.getHistoricalData(st, d, d).catch(() => ({ data: [] })))
+            );
+            const predictionResponses = await Promise.all(
+              streets.map(st => pedestrianAPI.getPredictionData(st, d, d).catch(() => ({ predictions: [] })))
+            );
+            
+            const historicalData = historicalResponses.flatMap(r => r?.data ?? []);
+            const predictionData = predictionResponses.flatMap(r => r?.predictions ?? []);
+            
+            // Combine: historical takes precedence, fill gaps with predictions
+            const combinedData = [...historicalData, ...predictionData.filter(p => !historicalData.find(h => h.date === p.date && h.hour === p.hour))];
+            const hourly = pedestrianAPI.transformToHourlyData(combinedData);
+            results[d] = hourly;
+          }
+        } else {
+          // Single street case
+          for (const d of datesToFetch) {
+            // Fetch both historical and prediction data
+            const [histResp, predResp] = await Promise.all([
+              pedestrianAPI.getHistoricalData(street, d, d).catch(() => ({ data: [] })),
+              pedestrianAPI.getPredictionData(street, d, d).catch(() => ({ predictions: [] }))
+            ]);
+            
+            // Combine: historical takes precedence, fill gaps with predictions
+            const combinedData = [...(histResp?.data ?? []), ...(predResp?.predictions ?? []).filter(p => !histResp?.data?.find(h => h.date === p.date && h.hour === p.hour))];
+            const hourly = pedestrianAPI.transformToHourlyData(combinedData);
+            results[d] = hourly;
+          }
         }
+        
         if (!mounted) return;
         setFetchedComparisonHourly(prev => ({ ...prev, ...results }));
       } catch (e) {
@@ -489,7 +527,7 @@ export const DataVisualization: React.FC<Props> = ({
     })();
 
     return () => { mounted = false; };
-  }, [dateRange, street, activeComparisonKeys, fetchedComparisonHourly]);
+  }, [dateRange, street, activeComparisonKeys, fetchedComparisonHourly, streets]);
 
   // When a week is selected, prefetch daily totals for the comparison dates that are missing
   useEffect(() => {
@@ -523,12 +561,49 @@ export const DataVisualization: React.FC<Props> = ({
     (async () => {
       try {
         const results: Record<string, { date: string; actual: number; predicted?: number | null; weekday?: string }> = {};
-        for (const dateStr of Array.from(needed)) {
-          const resp = await pedestrianAPI.getHistoricalData(street, dateStr, dateStr);
-          const hourly = pedestrianAPI.transformToHourlyData(resp?.data ?? []);
-          const total = (hourly || []).reduce((s: number, h: any) => s + Number(h.total ?? 0), 0);
-          results[dateStr] = { date: dateStr, actual: total, predicted: null, weekday: format(parseISO(dateStr), 'EEE') };
+        
+        if (street === 'All_streets') {
+          // For All_streets, aggregate data from all streets
+          if (!streets || streets.length === 0) {
+            if (mounted) setFetchedComparisonDaily(prev => ({ ...prev, ...results }));
+            return;
+          }
+
+          for (const dateStr of Array.from(needed)) {
+            // Fetch both historical and prediction data
+            const historicalResponses = await Promise.all(
+              streets.map(st => pedestrianAPI.getHistoricalData(st, dateStr, dateStr).catch(() => ({ data: [] })))
+            );
+            const predictionResponses = await Promise.all(
+              streets.map(st => pedestrianAPI.getPredictionData(st, dateStr, dateStr).catch(() => ({ predictions: [] })))
+            );
+            
+            const historicalData = historicalResponses.flatMap(r => r?.data ?? []);
+            const predictionData = predictionResponses.flatMap(r => r?.predictions ?? []);
+            
+            // Combine: historical takes precedence, fill gaps with predictions
+            const combinedData = [...historicalData, ...predictionData.filter(p => !historicalData.find(h => h.date === p.date && h.hour === p.hour))];
+            const hourly = pedestrianAPI.transformToHourlyData(combinedData);
+            const total = (hourly || []).reduce((s: number, h: any) => s + Number(h.total ?? 0), 0);
+            results[dateStr] = { date: dateStr, actual: total, predicted: null, weekday: format(parseISO(dateStr), 'EEE') };
+          }
+        } else {
+          // Single street case
+          for (const dateStr of Array.from(needed)) {
+            // Fetch both historical and prediction data
+            const [histResp, predResp] = await Promise.all([
+              pedestrianAPI.getHistoricalData(street, dateStr, dateStr).catch(() => ({ data: [] })),
+              pedestrianAPI.getPredictionData(street, dateStr, dateStr).catch(() => ({ predictions: [] }))
+            ]);
+            
+            // Combine: historical takes precedence, fill gaps with predictions
+            const combinedData = [...(histResp?.data ?? []), ...(predResp?.predictions ?? []).filter(p => !histResp?.data?.find(h => h.date === p.date && h.hour === p.hour))];
+            const hourly = pedestrianAPI.transformToHourlyData(combinedData);
+            const total = (hourly || []).reduce((s: number, h: any) => s + Number(h.total ?? 0), 0);
+            results[dateStr] = { date: dateStr, actual: total, predicted: null, weekday: format(parseISO(dateStr), 'EEE') };
+          }
         }
+        
         if (!mounted) return;
         setFetchedComparisonDaily(prev => ({ ...prev, ...results }));
       } catch (e) {
@@ -537,7 +612,82 @@ export const DataVisualization: React.FC<Props> = ({
     })();
 
     return () => { mounted = false; };
-  }, [dateRange, filteredDaily, activeComparisonKeys, street, combinedDaily, fetchedComparisonDaily]);
+  }, [dateRange, filteredDaily, activeComparisonKeys, street, combinedDaily, fetchedComparisonDaily, streets]);
+
+  // When a month is selected, prefetch daily totals for the comparison dates that are missing
+  // (month view can cover many days; ensure comparisons like same days last month/last year are fetched)
+  useEffect(() => {
+    if (!dateRange || !dateRange.start || dateRange.type !== 'month' || !street) return;
+
+    const needed = new Set<string>();
+
+    // Build list of days in the selected month (filteredDaily should already reflect the month)
+    (filteredDaily || []).forEach((d) => {
+      const dateObj = parseISO(d.date);
+      const candidates: Record<string, string> = {
+        yesterday: format(subDays(dateObj, 1), 'yyyy-MM-dd'),
+        lastWeek: format(subWeeks(dateObj, 1), 'yyyy-MM-dd'),
+        lastMonth: format(subMonths(dateObj, 1), 'yyyy-MM-dd'),
+        lastYear: format(subYears(dateObj, 1), 'yyyy-MM-dd'),
+      };
+
+      Object.entries(candidates).forEach(([key, dateStr]) => {
+        if (!activeComparisonKeys.includes(key)) return;
+        const presentInCombined = (combinedDaily || []).some(cd => cd.date === dateStr);
+        if (!presentInCombined && !fetchedComparisonDaily[dateStr]) needed.add(dateStr);
+      });
+    });
+
+    if (needed.size === 0) return;
+
+    let mounted = true;
+    (async () => {
+      try {
+        const results: Record<string, { date: string; actual: number; predicted?: number | null; weekday?: string }> = {};
+
+        if (street === 'All_streets') {
+          if (!streets || streets.length === 0) {
+            if (mounted) setFetchedComparisonDaily(prev => ({ ...prev, ...results }));
+            return;
+          }
+
+          for (const dateStr of Array.from(needed)) {
+            const historicalResponses = await Promise.all(
+              streets.map(st => pedestrianAPI.getHistoricalData(st, dateStr, dateStr).catch(() => ({ data: [] })))
+            );
+            const predictionResponses = await Promise.all(
+              streets.map(st => pedestrianAPI.getPredictionData(st, dateStr, dateStr).catch(() => ({ predictions: [] })))
+            );
+
+            const historicalData = historicalResponses.flatMap(r => r?.data ?? []);
+            const predictionData = predictionResponses.flatMap(r => r?.predictions ?? []);
+            const combinedData = [...historicalData, ...predictionData.filter(p => !historicalData.find(h => h.date === p.date && h.hour === p.hour))];
+            const hourly = pedestrianAPI.transformToHourlyData(combinedData);
+            const total = (hourly || []).reduce((s: number, h: any) => s + Number(h.total ?? 0), 0);
+            results[dateStr] = { date: dateStr, actual: total, predicted: null, weekday: format(parseISO(dateStr), 'EEE') };
+          }
+        } else {
+          for (const dateStr of Array.from(needed)) {
+            const [histResp, predResp] = await Promise.all([
+              pedestrianAPI.getHistoricalData(street, dateStr, dateStr).catch(() => ({ data: [] })),
+              pedestrianAPI.getPredictionData(street, dateStr, dateStr).catch(() => ({ predictions: [] }))
+            ]);
+            const combinedData = [...(histResp?.data ?? []), ...(predResp?.predictions ?? []).filter(p => !histResp?.data?.find(h => h.date === p.date && h.hour === p.hour))];
+            const hourly = pedestrianAPI.transformToHourlyData(combinedData);
+            const total = (hourly || []).reduce((s: number, h: any) => s + Number(h.total ?? 0), 0);
+            results[dateStr] = { date: dateStr, actual: total, predicted: null, weekday: format(parseISO(dateStr), 'EEE') };
+          }
+        }
+
+        if (!mounted) return;
+        setFetchedComparisonDaily(prev => ({ ...prev, ...results }));
+      } catch (e) {
+        console.warn('Failed to fetch comparison monthly data', e);
+      }
+    })();
+
+    return () => { mounted = false; };
+  }, [dateRange, filteredDaily, activeComparisonKeys, street, combinedDaily, fetchedComparisonDaily, streets]);
 
   // Build hourly comparison dataset when a single day is selected (use fetchedComparisonHourly when available).
   const combinedComparisonHourlyData = useMemo(() => {
@@ -612,7 +762,7 @@ export const DataVisualization: React.FC<Props> = ({
 
       return row;
     });
-  }, [filteredDaily, combinedDaily]);
+  }, [filteredDaily, combinedDaily, fetchedComparisonDaily, activeComparisonKeys, dateRange]);
 
   return (
   <Card className="mb-6">

@@ -724,7 +724,7 @@ export function StatisticsCards({ statistics, loading, street, dateRange, hourly
     };
 
     loadComparisonData();
-  }, [dateRange, street, statistics]);
+  }, [dateRange, street, statistics, streets]);
   if (loading) {
     return (
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -822,7 +822,7 @@ export function StatisticsCards({ statistics, loading, street, dateRange, hourly
         <CardContent>
           <div className="text-2xl font-bold">{formatNumber(totalWithPredictions)}</div>
           <p className="text-xs text-muted-foreground">
-            {street}
+            {street === "All_streets" ? "All Streets" : street.replace(/_/g, " ")}
           </p>
           
           {/* Show comparisons for day/week/month filters */}

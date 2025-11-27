@@ -27,6 +27,7 @@ export function HeatmapVisualization({ hourlyData, hourlyPredictions = [], loadi
   const [heatmapData, setHeatmapData] = useState<HeatmapData[]>([]);
   const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
   const hours = Array.from({ length: 24 }, (_, i) => i);
+  const displayStreet = street === 'All_streets' ? 'All Streets' : street.replace(/_/g, ' ');
 
   // Determine which days to show based on dateRange
   let daysToShow: number[] = Array.from({ length: 7 }, (_, i) => i);
@@ -249,10 +250,10 @@ export function HeatmapVisualization({ hourlyData, hourlyPredictions = [], loadi
       <CardHeader className="pb-3">
         <CardTitle className="text-base">
           {dateRange && dateRange.type === 'day'
-            ? `Traffic Pattern - ${street}`
+            ? `Traffic Pattern - ${displayStreet}`
             : dateRange && dateRange.type === 'week'
-            ? `Weekly Traffic Pattern (${format(dateRange.start, 'd MMM')} - ${format(dateRange.end, 'd MMM')}) - ${street}`
-            : `Traffic Pattern - ${street}`}
+            ? `Weekly Traffic Pattern (${format(dateRange.start, 'd MMM')} - ${format(dateRange.end, 'd MMM')}) - ${displayStreet}`
+            : `Traffic Pattern - ${displayStreet}`}
           {dateRange && dateRange.type === 'month' && (
             <span className="block text-xs text-red-500 mt-1">(Only suitable for day and week view)</span>
           )}

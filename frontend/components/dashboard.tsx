@@ -521,19 +521,63 @@ useEffect(() => {
         const now = new Date();
         const currentHour = now.getHours();
 
-        const [histToday, predToday, histLast, predLast] = await Promise.all([
-          pedestrianAPI.getHistoricalData(filters.street, todayStr, todayStr),
-          pedestrianAPI.getPredictionData(filters.street, todayStr, todayStr),
-          pedestrianAPI.getHistoricalData(filters.street, lastStr, lastStr),
-          pedestrianAPI.getPredictionData(filters.street, lastStr, lastStr),
-        ]);
-
         // Helper to sum hourly totals up to a given hour for a specific date
         const sumHourlyUpTo = (hourly: any[], dateStr: string, maxHour: number): number | null => {
           const filtered = hourly.filter(h => h.date === dateStr && typeof (h as any).hour === 'number' && (h as any).hour <= maxHour);
           if (filtered.length === 0) return null;
           return filtered.reduce((sum, h: any) => sum + (typeof h.total === 'number' ? h.total : 0), 0);
         };
+
+        let histToday: any;
+        let predToday: any;
+        let histLast: any;
+        let predLast: any;
+
+        // If "All_streets" is selected, aggregate data from all streets
+        if (filters.street === 'All_streets') {
+          if (!streets || streets.length === 0) {
+            setTodayTrendAbs(null);
+            setTodayTrendPct(null);
+            return;
+          }
+
+          const todayResults = await Promise.all(streets.map(st =>
+            Promise.all([
+              pedestrianAPI.getHistoricalData(st, todayStr, todayStr),
+              pedestrianAPI.getPredictionData(st, todayStr, todayStr),
+            ])
+          ));
+
+          const lastResults = await Promise.all(streets.map(st =>
+            Promise.all([
+              pedestrianAPI.getHistoricalData(st, lastStr, lastStr),
+              pedestrianAPI.getPredictionData(st, lastStr, lastStr),
+            ])
+          ));
+
+          // Aggregate all data
+          const todayHistData = todayResults.flatMap(r => r[0]?.data ?? []);
+          const todayPredData = todayResults.flatMap(r => r[1]?.predictions ?? []);
+          const lastHistData = lastResults.flatMap(r => r[0]?.data ?? []);
+          const lastPredData = lastResults.flatMap(r => r[1]?.predictions ?? []);
+
+          histToday = { data: todayHistData };
+          predToday = { predictions: todayPredData };
+          histLast = { data: lastHistData };
+          predLast = { predictions: lastPredData };
+        } else {
+          // Single street case
+          const results = await Promise.all([
+            pedestrianAPI.getHistoricalData(filters.street, todayStr, todayStr),
+            pedestrianAPI.getPredictionData(filters.street, todayStr, todayStr),
+            pedestrianAPI.getHistoricalData(filters.street, lastStr, lastStr),
+            pedestrianAPI.getPredictionData(filters.street, lastStr, lastStr),
+          ]);
+          histToday = results[0];
+          predToday = results[1];
+          histLast = results[2];
+          predLast = results[3];
+        }
 
         // Today's cumulative total up to current hour: prefer predictions, fallback to actuals, then daily total
         const hourlyPredToday = pedestrianAPI.transformToHourlyData(predToday?.predictions ?? []);
@@ -583,7 +627,7 @@ useEffect(() => {
     };
 
     computeTodayTrend();
-  }, [filters.street]);
+  }, [filters.street, streets]);
 
   // Compute last month's average daily total for event impact comparison
   useEffect(() => {
@@ -597,8 +641,24 @@ useEffect(() => {
         const startStr = oneMonthAgo.toISOString().split('T')[0];
         const endStr = today.toISOString().split('T')[0];
         
-        const histResp = await pedestrianAPI.getHistoricalData(filters.street, startStr, endStr);
-        const dailyData = pedestrianAPI.transformToDailyData(histResp?.data ?? []);
+        let dailyData: DailyDataPoint[] = [];
+
+        if (filters.street === 'All_streets') {
+          if (!streets || streets.length === 0) {
+            setLastMonthAvg(null);
+            return;
+          }
+
+          const results = await Promise.all(streets.map(st =>
+            pedestrianAPI.getHistoricalData(st, startStr, endStr)
+          ));
+
+          const allData = results.flatMap(r => r?.data ?? []);
+          dailyData = pedestrianAPI.transformToDailyData(allData);
+        } else {
+          const histResp = await pedestrianAPI.getHistoricalData(filters.street, startStr, endStr);
+          dailyData = pedestrianAPI.transformToDailyData(histResp?.data ?? []);
+        }
         
         if (dailyData.length > 0) {
           const total = dailyData.reduce((sum, d) => sum + (d.total ?? 0), 0);
@@ -612,7 +672,7 @@ useEffect(() => {
     };
     
     computeLastMonthAvg();
-  }, [filters.street]);
+  }, [filters.street, streets]);
 
   // Calendar events loader: last 6 months to next 3 months
   const loadCalendarEvents = async () => {
@@ -748,7 +808,6 @@ useEffect(() => {
 
   return (
     <div className="min-h-screen flex flex-col bg-gray-50 dark:bg-gray-900">
-    <div className="max-w-[1600px] mx-auto w-full border-l border-r border-gray-200 dark:border-gray-700"></div>  
       {/* Header */}
       <header className="bg-white dark:bg-gray-800 shadow-sm border-b dark:border-gray-700 flex-shrink-0">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -770,7 +829,6 @@ useEffect(() => {
 
       <div className="flex-1 overflow-y-auto px-4 sm:px-6 lg:px-8 py-6 h-full">
         <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-6 h-full">
-          </div>
           <div className="grid grid-cols-1 lg:grid-cols-5 gap-6 h-full">
             {/* Full-width Recommendations - compact */}
             <div className="lg:col-span-5">
@@ -860,7 +918,9 @@ useEffect(() => {
                     <div className="text-sm space-y-1">
                       <div className="flex justify-between">
                         <span className="text-gray-600 dark:text-gray-400">Street:</span>
-                        <Badge variant="secondary">{filters.street}</Badge>
+                        <Badge variant="secondary">
+                          {filters.street === 'All_streets' ? 'All Streets' : filters.street.replace(/_/g, ' ')}
+                        </Badge>
                       </div>
                       <div className="flex justify-between">
                         <span className="text-gray-600 dark:text-gray-400">Period:</span>
@@ -907,8 +967,9 @@ useEffect(() => {
                     comparisonSeries={comparisonSeries}
                     streetTotals={streetTotals}
                     street={filters.street}
+                    streets={streets}
                   />
-                  
+
                   <HeatmapVisualization
                     hourlyData={hourlyData}
                     hourlyPredictions={hourlyPredictions}
@@ -921,15 +982,16 @@ useEffect(() => {
                 <div className="xl:col-span-1">
                   <CalendarComponent
                     events={calendarEvents}
-                    loading={loading}
                     futureEvents={futureEvents}
+                    loading={loading}
                     dateRange={filters.dateRange}
-                    />
-                  </div>
+                  />
                 </div>
               </div>
             </div>
           </div>
         </div>
+      </div>
+    </div>
   );
 }
