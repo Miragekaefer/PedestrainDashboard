@@ -403,44 +403,60 @@ async def get_all_events():
         normalized = []
 
         for ev in raw_events:
-            date_raw = ev.get("date") or ev.get("datetime")
-            hour_raw = ev.get("hour", 0)
+            try:
+                # -------------------------
+                # DATE NORMALIZATION
+                # -------------------------
+                date_raw = ev.get("date") or ev.get("datetime") or ""
 
-            # Normalize date
-            if isinstance(date_raw, str):
-                # Try to parse both YYYY-MM-DD and full range strings
-                if "_" in date_raw:  
-                    # Extract ONLY the first date before the first underscore
-                    # e.g. "2023-05-28_11-00_2023-05-28_23-59"
+                if "_" in date_raw:
+                    # extract first date only
                     date_raw = date_raw.split("_")[0]
 
-            # Convert event flag
-            event_raw = ev.get("event", 0)
-            if isinstance(event_raw, str) and not event_raw.isdigit():
-                # Any non-numeric string means: yes, this IS an event day
-                event_flag = 1
-            else:
-                event_flag = int(event_raw)
+                # validate date string
+                try:
+                    datetime.strptime(date_raw, "%Y-%m-%d")
+                except:
+                    logger.warning(f"Invalid date in event: {date_raw}")
+                    continue
 
-            # Convert concert flag
-            concert_raw = ev.get("concert", 0)
-            if isinstance(concert_raw, str) and not concert_raw.isdigit():
-                concert_flag = 1
-            else:
-                concert_flag = int(concert_raw)
+                # -------------------------
+                # HOUR NORMALIZATION
+                # -------------------------
+                hour_raw = ev.get("hour", 0)
+                try:
+                    hour_raw = int(hour_raw)
+                except:
+                    hour_raw = 0
 
-            normalized.append({
-                "date": date_raw,
-                "hour": int(hour_raw),
-                "event": event_flag,
-                "concert": concert_flag,
-                "datetime": f"{date_raw} {hour_raw:02d}:00:00"
-            })
+                # -------------------------
+                # EVENT FLAG
+                # -------------------------
+                event_raw = ev.get("event", 0)
+                event_flag = 1 if str(event_raw).strip().lower() not in ["0", "no", "none"] else 0
 
-        return {
-            "count": len(normalized),
-            "events": normalized
-        }
+                # -------------------------
+                # CONCERT FLAG
+                # -------------------------
+                concert_raw = ev.get("concert", 0)
+                concert_flag = 1 if str(concert_raw).strip().lower() not in ["0", "no", "none"] else 0
+
+                # -------------------------
+                # OUTPUT
+                # -------------------------
+                normalized.append({
+                    "date": date_raw,
+                    "hour": hour_raw,
+                    "event": event_flag,
+                    "concert": concert_flag,
+                    "datetime": f"{date_raw} {hour_raw:02d}:00:00"
+                })
+
+            except Exception as inner_e:
+                logger.error(f"Malformed event entry: {ev} — {inner_e}")
+                continue
+
+        return {"count": len(normalized), "events": normalized}
 
     except Exception as e:
         logger.error(f"Error fetching all events: {e}")
@@ -552,28 +568,31 @@ async def get_all_holidays():
 @app.get(
     "/api/lecture/all",
     summary="Alle Vorlesungsperioden abrufen",
-    description="Gibt alle Vorlesungsperioden zurück (für Modelltraining)",
     tags=["Calendar Features"]
 )
 async def get_all_lectures():
     try:
-        all_dates = redis_client.get_all_lecture_dates()  # implement in Redis client
+        # Get all dates from both universities
+        all_dates = redis_client.get_all_lecture_dates()
         results = []
+        for date in sorted(all_dates):
+            info = redis_client.get_lecture_info(date)
+            if info:
+                results.append({
+                    "date": date,
+                    "lecture_period_jmu": info.get("jmu_lecture", 0)
+                })
 
-        for date_str in all_dates:
-            info = redis_client.get_lecture_info(date_str)
-            if not info:
-                continue
-            results.append({
-                "date": date_str,
-                "is_lecture_period": int(info.get("jmu_lecture", False))
-            })
+        return {
+            "count": len(results),
+            "data": results
+        }
 
-        return {"count": len(results), "data": results}
     except Exception as e:
-        logger.error(f"Error fetching all lectures: {e}")
+        logger.error(f"Error fetching all lecture: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
+    
+    
 @app.get(
     "/api/school-holidays",
     summary="Alle Schulferien-Perioden",

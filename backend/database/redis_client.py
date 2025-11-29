@@ -20,52 +20,83 @@ class PedestrianRedisClient:
     # ============================================
 
     def get_all_events(self) -> List[Dict]:
-        """Holt alle Events mit Format {date, hour, datatime, event, concert}"""
+        """
+        Returns clean event data for ML model:
+        {
+            "date": "YYYY-MM-DD",
+            "datetime": "YYYY-MM-DD HH:00:00",
+            "event": int,
+            "concert": int
+        }
+        """
+
         events = []
-        
-        # Alle Event-Keys mit Pattern-Matching finden
-        pattern = "event:*:*"
-        keys = self.client.keys(pattern)
-        
+        keys = self.client.keys("event:*")
+
         for key in keys:
-            # Key-Format: event:YYYY-MM-DD:HH
-            parts = key.split(':')
-            if len(parts) == 3 and parts[0] == 'event':
-                data = self.client.hgetall(key)
-                
-                if data:
-                    events.append({
-                        'date': data.get('date', parts[1]),
-                        'hour': int(data.get('hour', parts[2])),
-                        "datetime": data.get('datetime'),
-                        'event': bool(int(data.get('has_event', 0))),
-                        'concert': bool(int(data.get('has_concert', 0)))
-                    })
-        
-        # Nach Datum und Stunde sortieren
-        events.sort(key=lambda x: (x['date'], x['hour']))
+            parts = key.split(":")
+
+            # Only allow event:YYYY-MM-DD:HH
+            if len(parts) != 3:
+                continue
+
+            _, date_str, hour_str = parts
+
+            # Validate date
+            try:
+                datetime.strptime(date_str, "%Y-%m-%d")
+            except:
+                continue
+
+            # Validate hour
+            try:
+                hour = int(hour_str)
+            except:
+                continue
+
+            raw = self.client.hgetall(key) or {}
+
+            event_flag = int(raw.get("has_event", "0"))
+            concert_flag = int(raw.get("has_concert", "0"))
+
+            dt = f"{date_str} {hour:02d}:00:00"
+
+            events.append({
+                "date": date_str,
+                "datetime": dt,
+                "event": event_flag,
+                "concert": concert_flag
+            })
+
         return events
+
+
 
     # ============================================
     # ALL LECTURES (FOR MODEL TRAINING)
     # ============================================
 
     def get_all_lecture_dates(self) -> List[str]:
-        """Return all dates that are within lecture periods"""
-        return list(self.client.smembers('lectures:all_dates') or [])
+        """Return all lecture dates from Redis (matches your real schema)."""
+        keys = self.client.keys("lecture:daily:*")  # Changed from "lecture:*"
+        dates = []
+
+        for key in keys:
+            parts = key.split(":")
+            if len(parts) == 3:  # Changed from 2 to 3
+                dates.append(parts[2])  # Changed from parts[1] to parts[2]
+
+        return dates
 
     def get_all_lectures(self) -> List[Dict]:
-        """Return all lecture periods for all dates"""
-        all_dates = self.get_all_lecture_dates()
+        dates = self.get_all_lecture_dates()
         results = []
 
-        for date_str in all_dates:
-            info = self.get_lecture_info(date_str) or {}
-            results.append({
-                "date": date_str,
-                "is_lecture_period": int(info.get("jmu_lecture", 0))
-            })
-        
+        for date in dates:
+            info = self.get_lecture_info(date)
+            if info:
+                results.append(info)
+
         return results
 
     # ============================================
@@ -556,25 +587,23 @@ class PedestrianRedisClient:
     # ============================================
     
     def get_lecture_info(self, date: str) -> Optional[Dict]:
-        """Holt Vorlesungszeit-Informationen"""
-        key = f"lecture:detail:{date}"
+        """Read lecture info from Redis matching actual schema."""
+        key = f"lecture:daily:{date}"  # Changed from "lecture:{date}"
         data = self.client.hgetall(key)
-        
-        if data:
-            return {
-                'date': data['date'],
-                'jmu_lecture': bool(int(data.get('jmu_lecture', 0))),
-                'thws_lecture': bool(int(data.get('thws_lecture', 0))),
-                'jmu_period': {
-                    'start': data.get('jmu_period_start'),
-                    'end': data.get('jmu_period_end')
-                } if data.get('jmu_lecture') == '1' else None,
-                'thws_period': {
-                    'start': data.get('thws_period_start'),
-                    'end': data.get('thws_period_end')
-                } if data.get('thws_lecture') == '1' else None
-            }
-        return None
+
+        if not data:
+            return None
+
+        # Return university-specific flags
+        university = data.get("university", "")
+        is_lecture = int(data.get("is_lecture_period", 0))
+
+        return {
+            "date": data.get("date", date),
+            "is_lecture_period": is_lecture,
+            "jmu_lecture": 1 if (is_lecture and university == "JMU") else 0,
+            "thws_lecture": 1 if (is_lecture and university == "THWS") else 0
+        }
     
     def is_jmu_lecture_period(self, date: str) -> bool:
         """Prüft ob JMU Vorlesungszeit"""

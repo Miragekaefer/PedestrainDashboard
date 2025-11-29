@@ -115,7 +115,7 @@ def create_base_time_features(df):
     for unit, period in [('hour', 24), ('day_of_week', 7), ('month', 12)]:
         df[f'{unit}_sin'] = np.sin(2 * np.pi * df[unit]/period)
         df[f'{unit}_cos'] = np.cos(2 * np.pi * df[unit]/period)
-    
+    print("ok1")
     return df
 
 def create_time_block_features(df):
@@ -134,6 +134,7 @@ def create_time_block_features(df):
     
     for name, condition in time_blocks.items():
         df[name] = condition.astype(int)
+    print("test2")
     return df
 
 def create_weather_features(df):
@@ -147,6 +148,7 @@ def create_weather_features(df):
     
     df['temp_band'] = pd.cut(df['temperature'], bins=[-np.inf, 5, 15, 25, np.inf], labels=['cold', 'mild', 'warm', 'hot'])
     df = pd.concat([df, pd.get_dummies(df['temp_band'], prefix='temp')], axis=1)
+    print("ok3")
     return df
 
 def load_events_from_api(base_url=BASE_URL):
@@ -193,32 +195,23 @@ def load_lectures_from_api(base_url=BASE_URL):
         data = res.json().get("data", [])
     except Exception as e:
         print(f"❌ Failed to fetch lectures from {url}: {e}")
-        return pd.DataFrame(columns=["date", "lecture_period_jmu"])
+        return pd.DataFrame(columns=["date", "is_lecture_period"])
 
     if not data:
         print("⚠️ Lecture API returned no data")
-        return pd.DataFrame(columns=["date", "lecture_period_jmu"])
+        return pd.DataFrame(columns=["date", "is_lecture_period"])
 
     rows = []
     for d in data:
-        # Accept ANY of these keys
-        date_raw = (
-            d.get("date") or
-            d.get("datetime") or
-            d.get("day") or
-            None
-        )
-
+        date_raw = d.get("date")
         rows.append({
             "date": date_raw,
-            "lecture_period_jmu": int(d.get("is_lecture_period", 0))
+            "is_lecture_period": int(d.get("is_lecture_period", 0))
         })
 
     df = pd.DataFrame(rows)
-
     df['date'] = pd.to_datetime(df['date'], errors='coerce')
-    df = df.dropna(subset=['date'])  # keep only valid dates
-
+    df = df.dropna(subset=['date'])
     return df
 
 
@@ -335,7 +328,7 @@ def add_enhanced_holiday_features(df):
         df["is_school_holiday"] = 0
     else:
         df["is_school_holiday"] = df["is_school_holiday"].fillna(0).astype(int)
-
+    print("test5b")
     return df
 
 def add_street_features(df):
@@ -374,7 +367,7 @@ def create_seasonal_features(df):
     return df
 
 def create_all_features(df, is_train=True, train_avg_values=None):
-    original_index = df.index
+    print("Starting feature engineering...")
     df = create_base_time_features(df)
     df = create_time_block_features(df)
     df = create_weather_features(df)
